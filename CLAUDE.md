@@ -201,9 +201,24 @@ node e2e/text-flow.test.mjs --mode=host
 
 | 브랜치 | 용도 |
 |--------|------|
-| `main` | 최종 릴리즈 |
+| `main` | 최종 릴리즈. 태그(v0.5.0 등)로 안정 버전 보존 |
 | `devel` | 개발 통합 |
 | `local/task{num}` | 타스크별 작업 |
+
+### Git 워크플로우
+
+```
+local/task{N}  ──커밋──커밋──┐
+local/task{N+1}──커밋──커밋──┤
+                              ├─→ devel merge (관련 타스크 묶어서)
+                              │
+                              ├─→ main merge + 태그 (릴리즈 시점)
+```
+
+- **타스크 브랜치**: `local/task{N}`에서 잘게 커밋. 작업 단위마다 커밋.
+- **devel merge**: 관련 타스크를 묶어서 devel에 merge. 개별 타스크마다 즉시 merge하지 않음.
+- **main merge + 태그**: 릴리즈 시점에 devel → main merge 후 태그 생성.
+- **원격 push**: devel, main merge 시 push. 타스크 브랜치는 로컬 유지.
 
 ### 타스크 진행 절차
 
