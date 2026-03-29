@@ -73,7 +73,8 @@ fn resolve_metric_alias(name: &str) -> &str {
     match name {
         "함초롬돋움" | "한컴돋움" => "HCR Dotum",
         "돋움" => "Dotum",
-        "바탕" | "함초롬바탕" | "한컴바탕" => "HCR Batang",
+        "함초롬바탕" | "한컴바탕" => "HCR Batang",
+        "바탕" => "Batang",  // 윈도우 TTF 바탕
         "맑은 고딕" => "Malgun Gothic",
         "나눔고딕" => "NanumGothic",
         "나눔명조" => "NanumMyeongjo",

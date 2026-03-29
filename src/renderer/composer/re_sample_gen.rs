@@ -375,7 +375,7 @@ mod tests {
             let lang_names = ["한글", "영어", "한자", "일어", "기타", "기호", "사용자"];
             for (li, fonts) in doc.doc_info.font_faces.iter().enumerate() {
                 let lang = if li < lang_names.len() { lang_names[li] } else { "?" };
-                let names: Vec<&str> = fonts.iter().map(|f| f.name.as_str()).collect();
+                let names: Vec<String> = fonts.iter().map(|f| format!("{}(t{})", f.name, f.alt_type)).collect();
                 eprintln!("  font_faces[{}]({}): {:?}", li, lang, names);
             }
 
