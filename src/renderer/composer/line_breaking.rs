@@ -490,6 +490,7 @@ fn fill_lines(
                         &mut line_start_idx, lw, line_max_fs,
                         eff_w(is_first_line), eff_w(false),
                         is_first_line,
+                        w_hwp, // 토큰의 정확한 HWPUNIT 폭
                     );
                     for r in results_part {
                         results.push(r);
@@ -564,14 +565,21 @@ fn char_level_break_hwp(
     first_line_w: i32,
     normal_w: i32,
     mut is_first_line: bool,
+    token_width_hwp: i32, // 토큰 전체 HWPUNIT 폭 (정확한 메트릭 기반)
 ) -> (Vec<LineBreakResult>, i32, f64) {
     let mut results = Vec::new();
     let mut current_w = if is_first_line { first_line_w } else { normal_w };
+    let token_char_count = token_end - token_start;
 
     for ci in token_start..token_end {
-        let ch = text_chars[ci];
-        let char_w_px = if is_cjk_char(ch) { line_max_fs.max(12.0) } else { line_max_fs.max(12.0) * 0.5 };
-        let char_w = to_hwp(char_w_px);
+        // 토큰 폭을 글자 수로 균등 분배 (정확한 메트릭 기반)
+        let char_w = if token_char_count > 0 {
+            token_width_hwp / token_char_count as i32
+        } else {
+            let ch = text_chars[ci];
+            let char_w_px = if is_cjk_char(ch) { line_max_fs.max(12.0) } else { line_max_fs.max(12.0) * 0.5 };
+            to_hwp(char_w_px)
+        };
 
         if lw + char_w > current_w && ci > *line_start_idx {
             results.push(LineBreakResult {
