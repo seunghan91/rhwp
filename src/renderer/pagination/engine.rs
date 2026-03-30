@@ -63,10 +63,9 @@ impl Paginator {
         let mut prev_pagination_para: Option<usize> = None;  // vpos 보정용 이전 문단
 
         // 고정값 줄간격 TAC 표 병행 (Task #9):
-        // 표 높이와 후속 Fixed 문단 높이(lh+ls 기반)를 비교하여 큰 쪽 사용
-        let mut fix_table_start_h: f64 = 0.0;    // 표 시작 시 current_height
-        let mut fix_table_visual_h: f64 = 0.0;   // 표 시각적 높이 (lh)
-        let mut fix_vpos_tmp: f64 = 0.0;         // Fixed 문단 누적 높이 (lh+ls 기반)
+        // Percent 전환 시 표 높이 - Fixed 누적 차이분을 current_height에 추가
+        let mut fix_table_visual_h: f64 = 0.0;
+        let mut fix_vpos_tmp: f64 = 0.0;
         let mut fix_overlay_active = false;
 
         // 빈 줄 감추기: 페이지 시작 부분에서 감춘 빈 줄 수 (최대 2개)
@@ -104,16 +103,15 @@ impl Paginator {
                 }
             }
 
-            // 고정값→글자에따라 전환: para_height 적용 전에 current_height 보정 (Task #9)
+            // 고정값→글자에따라 전환: 표 높이와 Fixed 누적의 차이분 추가 (Task #9)
             if fix_overlay_active && !has_table {
                 let is_fixed = para_styles.get(para.para_shape_id as usize)
                     .map(|ps| ps.line_spacing_type == crate::model::style::LineSpacingType::Fixed)
                     .unwrap_or(false);
                 if !is_fixed {
-                    // Percent 전환: 표 시각적 높이를 current_height에 반영 (Task #9)
-                    let table_bottom = fix_table_start_h + fix_table_visual_h;
-                    if st.current_height < table_bottom {
-                        st.current_height = table_bottom;
+                    // 표 높이가 Fixed 누적보다 크면 차이분을 current_height에 추가
+                    if fix_table_visual_h > fix_vpos_tmp {
+                        st.current_height += fix_table_visual_h - fix_vpos_tmp;
                     }
                     fix_overlay_active = false;
                 }
@@ -378,29 +376,19 @@ impl Paginator {
                     st.current_height = height_before_controls + cap;
                 }
 
-                // 1. 표 감지: current_height를 lh+ls advance로 리셋 (Task #9)
+                // 표 감지: 시각적 높이 저장 + Fixed 누적 시작 (Task #9)
                 if let Some(seg) = para.line_segs.first() {
                     if seg.line_spacing < 0 {
                         fix_table_visual_h = crate::renderer::hwpunit_to_px(seg.line_height, self.dpi);
-                        let advance = crate::renderer::hwpunit_to_px(
-                            seg.line_height + seg.line_spacing, self.dpi).max(0.0);
-                        let sa = para_styles.get(para.para_shape_id as usize)
-                            .map(|s| s.spacing_after).unwrap_or(0.0);
-                        fix_table_start_h = height_before_controls;
-                        // fix_table_visual_h에 measured para_height도 저장 (cap 전)
-                        // 표 높이 = max(lh 시각적, measured para_height)
-                        fix_table_visual_h = fix_table_visual_h.max(para_height);
-                        fix_vpos_tmp = advance + sa;
+                        fix_vpos_tmp = 0.0;
                         fix_overlay_active = true;
-                        st.current_height = fix_table_start_h + fix_vpos_tmp;
                     }
                 }
             }
 
-            // 2~3. Fixed 문단: fix_vpos_tmp에 누적, current_height 동기화 (Task #9)
+            // Fixed 문단: 높이를 fix_vpos_tmp에 누적 (current_height는 건드리지 않음)
             if fix_overlay_active && !has_table {
                 fix_vpos_tmp += para_height;
-                st.current_height = fix_table_start_h + fix_vpos_tmp;
             }
 
         }
