@@ -1129,23 +1129,51 @@ impl LayoutEngine {
 
                 let para_y_before_compose = para_y;
 
-                let total_inline_width: f64 = para.controls.iter().map(|ctrl| {
-                    match ctrl {
-                        Control::Picture(pic) if pic.common.treat_as_char => {
-                            hwpunit_to_px(pic.common.width as i32, self.dpi)
+                // 줄별 TAC 컨트롤 너비 합산: 각 TAC가 속한 줄을 판별하여 줄별 최대 너비 계산
+                let tac_line_widths: Vec<f64> = {
+                    // 줄별 너비 합산 벡터
+                    let mut line_widths = vec![0.0f64; composed.lines.len().max(1)];
+                    for ctrl in &para.controls {
+                        let (is_tac, w) = match ctrl {
+                            Control::Picture(pic) if pic.common.treat_as_char => {
+                                (true, hwpunit_to_px(pic.common.width as i32, self.dpi))
+                            }
+                            Control::Shape(shape) if shape.common().treat_as_char => {
+                                (true, hwpunit_to_px(shape.common().width as i32, self.dpi))
+                            }
+                            Control::Equation(eq) => {
+                                (true, hwpunit_to_px(eq.common.width as i32, self.dpi))
+                            }
+                            Control::Table(t) if t.common.treat_as_char => {
+                                (true, hwpunit_to_px(t.common.width as i32, self.dpi))
+                            }
+                            _ => (false, 0.0),
+                        };
+                        if !is_tac { continue; }
+                        // 줄이 1개이면 무조건 0번 줄
+                        if composed.lines.len() <= 1 {
+                            line_widths[0] += w;
+                        } else {
+                            // 아직 줄 분배 전이므로 순서대로 채워넣기:
+                            // 현재 줄 너비 + 이 컨트롤 너비 > 셀 너비이면 다음 줄로
+                            let mut placed = false;
+                            for lw in line_widths.iter_mut() {
+                                if *lw == 0.0 || *lw + w <= inner_width + 0.5 {
+                                    *lw += w;
+                                    placed = true;
+                                    break;
+                                }
+                            }
+                            if !placed {
+                                if let Some(last) = line_widths.last_mut() {
+                                    *last += w;
+                                }
+                            }
                         }
-                        Control::Shape(shape) if shape.common().treat_as_char => {
-                            hwpunit_to_px(shape.common().width as i32, self.dpi)
-                        }
-                        Control::Equation(eq) => {
-                            hwpunit_to_px(eq.common.width as i32, self.dpi)
-                        }
-                        Control::Table(t) if t.common.treat_as_char => {
-                            hwpunit_to_px(t.common.width as i32, self.dpi)
-                        }
-                        _ => 0.0,
                     }
-                }).sum();
+                    line_widths
+                };
+                let total_inline_width: f64 = tac_line_widths.iter().cloned().fold(0.0f64, f64::max);
 
                 if !has_table_ctrl {
                     let is_last_para = cp_idx + 1 == composed_paras.len();
@@ -1200,15 +1228,24 @@ impl LayoutEngine {
                     .unwrap_or(Alignment::Left);
 
                 let mut prev_tac_text_pos: usize = 0;
-                let mut inline_x = match para_alignment {
-                    Alignment::Center | Alignment::Distribute => {
-                        inner_area.x + (inner_area.width - total_inline_width).max(0.0) / 2.0
+                // LINE_SEG 기반 줄별 TAC 이미지 배치를 위한 상태
+                // 빈 문단(runs 없음)에서 TAC 컨트롤을 LINE_SEG에 순서대로 매핑
+                let all_runs_empty = composed.lines.iter().all(|l| l.runs.is_empty());
+                let mut tac_seq_index: usize = 0; // TAC 컨트롤 순번 (빈 문단용)
+                let mut current_tac_line: usize = 0;
+                let mut inline_x = {
+                    let line_w = tac_line_widths.first().copied().unwrap_or(total_inline_width);
+                    match para_alignment {
+                        Alignment::Center | Alignment::Distribute => {
+                            inner_area.x + (inner_area.width - line_w).max(0.0) / 2.0
+                        }
+                        Alignment::Right => {
+                            inner_area.x + (inner_area.width - line_w).max(0.0)
+                        }
+                        _ => inner_area.x,
                     }
-                    Alignment::Right => {
-                        inner_area.x + (inner_area.width - total_inline_width).max(0.0)
-                    }
-                    _ => inner_area.x,
                 };
+                let mut tac_img_y = para_y_before_compose;
 
                 for (ctrl_idx, ctrl) in para.controls.iter().enumerate() {
                     match ctrl {
@@ -1224,11 +1261,48 @@ impl LayoutEngine {
                                     })
                                 });
                                 if !will_render_inline {
-                                    // 단독 이미지(텍스트 없는 문단): 직접 렌더링
+                                    // LINE_SEG 기반 줄 판별
+                                    let target_line = if all_runs_empty && para.line_segs.len() > 1 {
+                                        // 빈 문단: TAC 순번으로 LINE_SEG에 1:1 매핑
+                                        let li = tac_seq_index.min(para.line_segs.len() - 1);
+                                        tac_seq_index += 1;
+                                        li
+                                    } else {
+                                        // 텍스트 있는 문단: char position으로 줄 판별
+                                        composed.tac_controls.iter()
+                                            .find(|&&(_, _, ci)| ci == ctrl_idx)
+                                            .map(|&(abs_pos, _, _)| {
+                                                composed.lines.iter().enumerate()
+                                                    .rev()
+                                                    .find(|(_, line)| abs_pos >= line.char_start)
+                                                    .map(|(li, _)| li)
+                                                    .unwrap_or(0)
+                                            })
+                                            .unwrap_or(0)
+                                    };
+
+                                    if target_line > current_tac_line {
+                                        // 줄이 바뀜: inline_x 리셋, y를 LINE_SEG vpos 기준으로 이동
+                                        current_tac_line = target_line;
+                                        let line_w = tac_line_widths.get(target_line).copied().unwrap_or(0.0);
+                                        inline_x = match para_alignment {
+                                            Alignment::Center | Alignment::Distribute => {
+                                                inner_area.x + (inner_area.width - line_w).max(0.0) / 2.0
+                                            }
+                                            Alignment::Right => {
+                                                inner_area.x + (inner_area.width - line_w).max(0.0)
+                                            }
+                                            _ => inner_area.x,
+                                        };
+                                        if let Some(seg) = para.line_segs.get(target_line) {
+                                            tac_img_y = para_y_before_compose + hwpunit_to_px(seg.vertical_pos, self.dpi);
+                                        }
+                                    }
+
                                     let pic_h = hwpunit_to_px(pic.common.height as i32, self.dpi);
                                     let pic_area = LayoutRect {
                                         x: inline_x,
-                                        y: para_y_before_compose,
+                                        y: tac_img_y,
                                         width: pic_w,
                                         height: pic_h,
                                     };

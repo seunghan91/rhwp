@@ -1674,7 +1674,7 @@ impl LayoutEngine {
                 );
             }
             PageItem::Shape { para_index, control_index } => {
-                self.layout_shape_item(
+                y_offset = self.layout_shape_item(
                     tree, col_node, paper_images, para_start_y,
                     *para_index, *control_index, &ctx, y_offset,
                 );
@@ -2111,12 +2111,13 @@ impl LayoutEngine {
         control_index: usize,
         ctx: &ColumnItemCtx,
         y_offset: f64,
-    ) {
+    ) -> f64 {
         let ColumnItemCtx {
             page_content, paragraphs, composed, styles, bin_data_content,
             layout, col_area, ..
         } = ctx;
         para_start_y.entry(para_index).or_insert(y_offset);
+        let mut result_y = y_offset;
         if let Some(para) = paragraphs.get(para_index) {
             if let Some(ctrl) = para.controls.get(control_index) {
                 if let Control::Picture(pic) = ctrl {
@@ -2201,7 +2202,7 @@ impl LayoutEngine {
                                 width: col_area.width,
                                 height: col_area.height - (pic_y - col_area.y),
                             };
-                            let _ = self.layout_body_picture(
+                            result_y = self.layout_body_picture(
                                 tree, col_node, pic,
                                 &pic_container, col_area, &layout.body_area,
                                 &LayoutRect { x: 0.0, y: 0.0, width: layout.page_width, height: layout.page_height },
@@ -2213,6 +2214,7 @@ impl LayoutEngine {
                 }
             }
         }
+        result_y
     }
 
     fn layout_wrap_around_paras(

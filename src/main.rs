@@ -919,6 +919,26 @@ fn dump_controls(args: &[String]) {
                                             indent, pi, cp.para_shape_id, cp.controls.len(),
                                             cp.text.len(), ls_info.join(", "));
                                     }
+                                    // 셀 내부 컨트롤 상세
+                                    for (ci, ctrl) in cp.controls.iter().enumerate() {
+                                        match ctrl {
+                                            Control::Picture(p) => {
+                                                println!("{}    ctrl[{}] 그림: bin_id={}, w={} h={} ({:.1}×{:.1}mm), tac={}, wrap={:?}, vert={:?}(off={}), horz={:?}(off={})",
+                                                    indent, ci, p.image_attr.bin_data_id,
+                                                    p.common.width, p.common.height,
+                                                    p.common.width as f64 / 7200.0 * 25.4,
+                                                    p.common.height as f64 / 7200.0 * 25.4,
+                                                    p.common.treat_as_char,
+                                                    p.common.text_wrap, p.common.vert_rel_to, p.common.vertical_offset,
+                                                    p.common.horz_rel_to, p.common.horizontal_offset);
+                                            }
+                                            Control::Shape(s) => {
+                                                println!("{}    ctrl[{}] 도형: tac={}, wrap={:?}",
+                                                    indent, ci, s.common().treat_as_char, s.common().text_wrap);
+                                            }
+                                            _ => {}
+                                        }
+                                    }
                                     // 내부 표 재귀
                                     if depth < 3 {
                                         for ctrl in &cp.controls {
