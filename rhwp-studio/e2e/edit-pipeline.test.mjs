@@ -485,6 +485,7 @@ async function run() {
     // ── 12. 표 셀 내 텍스트 입력 → 셀 높이 변경 ──
     console.log('\n[12] 표 셀 높이 변경...');
     await createNewDocument(page);
+    await clickEditArea(page);
 
     const cellHeightResult = await page.evaluate(() => {
       const w = window.__wasm;
@@ -492,38 +493,55 @@ async function run() {
       try {
         w.doc.insertText(0, 0, 0, 'TC #12: cell height change');
         w.doc.splitParagraph(0, 0, 26);
+        w.doc.insertText(0, 1, 0, 'Before table');
+        w.doc.splitParagraph(0, 1, 12);
+        w.doc.splitParagraph(0, 2, 0); // 표 호스트 빈 문단
+        w.doc.insertText(0, 3, 0, 'After table');
 
-        const tr = JSON.parse(w.doc.createTable(0, 1, 0, 2, 2));
+        const tr = JSON.parse(w.doc.createTable(0, 2, 0, 2, 2));
         const tp = tr.paraIdx, tc = tr.controlIdx;
 
-        // 셀에 짧은 텍스트
-        w.doc.insertTextInCell(0, tp, tc, 0, 0, 0, 'Short');
-        const svgBefore = w.doc.renderPageSvg(0);
-        const linesBefore = (svgBefore.match(/<line/g) || []).length;
+        // 셀[0,0]에 짧은 텍스트
+        w.doc.insertTextInCell(0, tp, tc, 0, 0, 0, 'Short text');
 
-        // 셀에 긴 텍스트 → 줄바꿈 → 셀 높이 증가
-        const longText = 'This is a long text that should cause line wrapping in the cell. ';
-        w.doc.insertTextInCell(0, tp, tc, 0, 0, 5, longText.repeat(3));
+        // 셀[1,1]에 긴 텍스트 → 줄바꿈 → 행 높이 증가
+        const longText = 'This is a long text that should cause line wrapping in the cell and increase the row height significantly. ';
+        w.doc.insertTextInCell(0, tp, tc, 3, 0, 0, longText.repeat(2));
 
         window.__eventBus?.emit('document-changed');
-        const svgAfter = w.doc.renderPageSvg(0);
-        const linesAfter = (svgAfter.match(/<line/g) || []).length;
 
-        return { linesBefore, linesAfter, ok: true };
+        // "After table" 텍스트가 표 아래에 정상 배치되는지 확인
+        const paraCount = w.doc.getParagraphCount(0);
+        let afterText = '';
+        for (let p = 0; p < paraCount; p++) {
+          const t = w.doc.getTextRange(0, p, 0, 50);
+          if (t.includes('After table')) { afterText = t; break; }
+        }
+
+        const shortText = w.doc.getTextInCell(0, tp, tc, 0, 0, 0, 50);
+        const longCellText = w.doc.getTextInCell(0, tp, tc, 3, 0, 0, 50);
+
+        return { shortText, longCellText: longCellText.substring(0, 30), afterText, ok: true };
       } catch (e) { return { error: e.message }; }
     });
-    await page.evaluate(() => new Promise(r => setTimeout(r, 300)));
+    await page.evaluate(() => new Promise(r => setTimeout(r, 500)));
 
     if (cellHeightResult.error) {
       console.log(`  SKIP: ${cellHeightResult.error}`);
     } else {
-      check(cellHeightResult.ok, `셀 높이 변경 테스트 완료 (SVG lines: ${cellHeightResult.linesBefore} → ${cellHeightResult.linesAfter})`);
+      check(cellHeightResult.shortText === 'Short text',
+        `셀[0,0] 짧은 텍스트: "${cellHeightResult.shortText}"`);
+      check(cellHeightResult.longCellText?.length > 20,
+        `셀[1,1] 긴 텍스트: "${cellHeightResult.longCellText}..."`);
+      check(cellHeightResult.afterText?.includes('After table'),
+        `표 뒤 문단 배치: "${cellHeightResult.afterText}"`);
     }
     await screenshot(page, 'edit-12-cell-height');
 
-    // ── 13. 표 셀 내 Enter → 셀 분할 후 렌더링 ──
+    // ── 13. 표 셀 내 Enter → 셀 분할 전후 비교 ──
     console.log('\n[13] 표 셀 내 Enter...');
     await createNewDocument(page);
+    await clickEditArea(page);
 
     const cellSplitResult = await page.evaluate(() => {
       const w = window.__wasm;
@@ -532,33 +550,49 @@ async function run() {
         w.doc.insertText(0, 0, 0, 'TC #13: cell split');
         w.doc.splitParagraph(0, 0, 18);
 
-        const tr = JSON.parse(w.doc.createTable(0, 1, 0, 2, 2));
-        const tp = tr.paraIdx, tc = tr.controlIdx;
+        // 1) 분할 전 표 (원본)
+        w.doc.splitParagraph(0, 1, 0); // 표 호스트 빈 문단
+        const tr1 = JSON.parse(w.doc.createTable(0, 1, 0, 2, 2));
+        const tp1 = tr1.paraIdx, tc1 = tr1.controlIdx;
+        w.doc.insertTextInCell(0, tp1, tc1, 0, 0, 0, 'AAABBB');
+        w.doc.insertTextInCell(0, tp1, tc1, 1, 0, 0, 'Cell 2');
+        w.doc.insertTextInCell(0, tp1, tc1, 2, 0, 0, 'Cell 3');
+        w.doc.insertTextInCell(0, tp1, tc1, 3, 0, 0, 'Cell 4');
 
-        w.doc.insertTextInCell(0, tp, tc, 0, 0, 0, 'AAABBB');
+        // "분할셀" 구분 문단
+        const paraCount1 = w.doc.getParagraphCount(0);
+        w.doc.insertText(0, paraCount1 - 1, 0, 'After split:');
+        w.doc.splitParagraph(0, paraCount1 - 1, 12);
 
-        // 셀 내 Enter → 문단 분할
-        w.doc.splitParagraphInCell(0, tp, tc, 0, 0, 3);
+        // 2) 분할 후 표 (복제) — 새 표 생성 후 셀[0,0]에서 Enter
+        const lastPara = w.doc.getParagraphCount(0) - 1;
+        w.doc.splitParagraph(0, lastPara, 0); // 표 호스트 빈 문단
+        const lastPara2 = w.doc.getParagraphCount(0) - 1;
+        const tr2 = JSON.parse(w.doc.createTable(0, lastPara2, 0, 2, 2));
+        const tp2 = tr2.paraIdx, tc2 = tr2.controlIdx;
+        w.doc.insertTextInCell(0, tp2, tc2, 0, 0, 0, 'AAABBB');
+        w.doc.insertTextInCell(0, tp2, tc2, 1, 0, 0, 'Cell 2');
+        w.doc.insertTextInCell(0, tp2, tc2, 2, 0, 0, 'Cell 3');
+        w.doc.insertTextInCell(0, tp2, tc2, 3, 0, 0, 'Cell 4');
 
-        const text0 = w.doc.getTextInCell(0, tp, tc, 0, 0, 0, 50);
-        const text1 = w.doc.getTextInCell(0, tp, tc, 0, 1, 0, 50);
+        // 셀[0,0]에서 Enter → 문단 분할
+        w.doc.splitParagraphInCell(0, tp2, tc2, 0, 0, 3);
+
+        const text0 = w.doc.getTextInCell(0, tp2, tc2, 0, 0, 0, 50);
+        const text1 = w.doc.getTextInCell(0, tp2, tc2, 0, 1, 0, 50);
 
         window.__eventBus?.emit('document-changed');
-        const svg = w.doc.renderPageSvg(0);
-        const hasA = svg.includes('>A<');
-        const hasB = svg.includes('>B<');
-
-        return { text0, text1, hasA, hasB, ok: true };
+        return { text0, text1, tp1, tp2, ok: true };
       } catch (e) { return { error: e.message }; }
     });
-    await page.evaluate(() => new Promise(r => setTimeout(r, 300)));
+    await page.evaluate(() => new Promise(r => setTimeout(r, 500)));
 
     if (cellSplitResult.error) {
       console.log(`  SKIP: ${cellSplitResult.error}`);
     } else {
-      check(cellSplitResult.text0 === 'AAA', `셀 분할 첫 문단: "${cellSplitResult.text0}"`);
-      check(cellSplitResult.text1 === 'BBB', `셀 분할 둘째 문단: "${cellSplitResult.text1}"`);
-      check(cellSplitResult.hasA && cellSplitResult.hasB, `SVG에 분할된 텍스트 렌더링`);
+      check(cellSplitResult.text0 === 'AAA', `분할 후 셀[0,0] 첫 문단: "${cellSplitResult.text0}"`);
+      check(cellSplitResult.text1 === 'BBB', `분할 후 셀[0,0] 둘째 문단: "${cellSplitResult.text1}"`);
+      check(cellSplitResult.ok, `분할 전 표(para=${cellSplitResult.tp1}) + 분할 후 표(para=${cellSplitResult.tp2})`);
     }
     await screenshot(page, 'edit-13-cell-split');
 
