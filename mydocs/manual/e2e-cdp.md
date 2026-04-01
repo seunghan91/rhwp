@@ -16,12 +16,62 @@ docker compose --env-file .env.docker run --rm wasm
 
 빌드 결과물은 `pkg/` 폴더에 생성된다.
 
-### 1.2 Chrome 디버깅 모드 시작 (Windows 호스트)
+### 1.2 WSL2 네트워크 설정 (mirrored 모드)
 
-Windows CMD 또는 PowerShell에서 실행:
+WSL2에서 Windows 호스트의 Chrome CDP에 접속하려면, mirrored 네트워크 모드를 사용한다.
+mirrored 모드에서는 Windows와 WSL2가 동일한 네트워크 스택을 공유하므로 `localhost`로 직접 통신할 수 있다.
+
+**Windows 측 설정** — `C:\Users\<사용자>\.wslconfig` 파일 생성 또는 편집:
+
+```ini
+[wsl2]
+networkingMode=mirrored
+memory=20GB
+processors=8
+swap=4GB
+dnsTunneling=false
+```
+
+> `networkingMode=mirrored`는 WSL 2.0.0 이상 + Windows 11 22H2 이상에서 지원된다.
+> `wsl --version`으로 WSL 버전을 확인할 수 있다.
+
+설정 후 PowerShell에서 WSL 재시작:
+
+```powershell
+wsl --shutdown
+```
+
+### 1.3 포트 프록시 설정
+
+mirrored 모드에서도 WSL2 → Windows 호스트의 Chrome CDP 접속을 위해 포트 프록시가 필요하다.
+
+Windows **관리자 권한** PowerShell에서 실행:
+
+```powershell
+# WSL2 IP 확인
+wsl hostname -I
+# 예: 172.21.192.102
+
+# 포트 프록시 추가
+netsh interface portproxy add v4tov4 listenport=19222 listenaddress=0.0.0.0 connectport=19222 connectaddress=(wsl hostname -I)
+
+# 확인
+netsh interface portproxy show v4tov4
+```
+
+> **참고**: WSL2 IP가 변경된 경우(재부팅 등) 포트 프록시를 재설정해야 한다:
+>
+> ```powershell
+> netsh interface portproxy delete v4tov4 listenport=19222 listenaddress=0.0.0.0
+> netsh interface portproxy add v4tov4 listenport=19222 listenaddress=0.0.0.0 connectport=19222 connectaddress=(wsl hostname -I)
+> ```
+
+### 1.4 Chrome 디버깅 모드 시작 (Windows 호스트)
+
+Windows CMD에서 실행:
 
 ```cmd
-"C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=19222 --remote-debugging-address=0.0.0.0 --user-data-dir="C:\temp\chrome-debug"
+start chrome --remote-debugging-port=19222 --remote-debugging-address=0.0.0.0 --user-data-dir="C:\temp\chrome-debug1"
 ```
 
 | 옵션 | 설명 |
@@ -30,97 +80,17 @@ Windows CMD 또는 PowerShell에서 실행:
 | `--remote-debugging-address=0.0.0.0` | WSL2에서 접근 가능하도록 모든 인터페이스 바인딩 |
 | `--user-data-dir` | 별도 프로필 (기존 Chrome과 충돌 방지) |
 
-Chrome이 시작되면 빈 탭이 열린다. 테스트 실행 시 새 탭이 자동으로 열려 테스트 과정을 실시간으로 볼 수 있다.
+Chrome이 시작되면 빈 탭이 열린다. 테스트 실행 시 새 탭이 자동으로 열리고, 테스트 완료 후 자동으로 닫힌다.
 
-### 1.3 WSL2 ↔ Windows 포트 포워딩 설정
-
-Windows 11 호스트의 WSL2 Ubuntu에서 호스트 Chrome의 CDP에 접속하려면 **포트 프록시** 설정이 필요하다.
-
-Windows **관리자 권한** PowerShell에서 실행:
-
-```powershell
-# WSL2 IP 확인 (Ubuntu 쪽에서: hostname -I)
-# 예: 172.21.192.102
-
-# 포트 프록시 추가
-netsh interface portproxy add v4tov4 listenport=19222 listenaddress=0.0.0.0 connectport=19222 connectaddress=172.21.192.102
-
-# 확인
-netsh interface portproxy show v4tov4
-```
-
-| 항목 | 설명 |
-|------|------|
-| `listenport=19222` | Windows에서 수신할 포트 |
-| `listenaddress=0.0.0.0` | 모든 인터페이스에서 수신 |
-| `connectport=19222` | Chrome CDP 포트와 동일 |
-| `connectaddress=172.21.192.102` | WSL2의 IP (재부팅 시 변경될 수 있음) |
-
-Windows 방화벽이 활성화된 경우 인바운드 룰도 추가해야 한다:
-
-```powershell
-netsh advfirewall firewall add rule name="WSL2 CDP Proxy" dir=in action=allow protocol=TCP localport=19222 remoteip=172.21.192.102
-```
-
-> **주의**: WSL2 IP는 재부팅마다 변경된다. 변경 시 포트 프록시와 방화벽 룰을 재설정해야 한다.
-> 아래 **1.3.1 WSL2 IP 고정** 설정을 적용하면 재설정이 불필요하다.
->
-> ```powershell
-> # 포트 프록시 재설정
-> netsh interface portproxy delete v4tov4 listenport=19222 listenaddress=0.0.0.0
-> netsh interface portproxy add v4tov4 listenport=19222 listenaddress=0.0.0.0 connectport=19222 connectaddress=<새 WSL2 IP>
->
-> # 방화벽 룰 재설정
-> netsh advfirewall firewall delete rule name="WSL2 CDP Proxy"
-> netsh advfirewall firewall add rule name="WSL2 CDP Proxy" dir=in action=allow protocol=TCP localport=19222 remoteip=<새 WSL2 IP>
-> ```
-
-#### 1.3.1 WSL2 IP 고정 (권장)
-
-WSL2의 IP를 고정하면 재부팅마다 포트 프록시와 방화벽 룰을 재설정할 필요가 없다.
-
-**Windows 측 설정** — `C:\Users\<사용자>\.wslconfig` 파일 생성 또는 편집:
-
-```ini
-[wsl2]
-networkingMode=static
-ipAddress=172.21.192.102
-gateway=172.21.192.1
-```
-
-> `networkingMode=static`은 Windows 11 22H2 이상 + WSL 2.0.0 이상에서 지원된다.
-> `wsl --version`으로 WSL 버전을 확인할 수 있다.
-
-**WSL2 Ubuntu 측 설정** — `/etc/wsl.conf` 파일에 DNS 설정 추가:
-
-```ini
-[network]
-generateResolvConf = false
-```
-
-그리고 `/etc/resolv.conf`를 직접 생성:
+#### CDP 연결 확인 (WSL2에서)
 
 ```bash
-sudo rm /etc/resolv.conf
-echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
+curl -s http://localhost:19222/json/version
 ```
 
-설정 후 PowerShell에서 WSL 재시작:
+정상이면 Chrome 버전 정보가 JSON으로 출력된다.
 
-```powershell
-wsl --shutdown
-```
-
-> **대안 (mirrored 모드)**: WSL 2.4.4+ 에서는 `networkingMode=mirrored`를 사용하면
-> Windows와 WSL2가 동일한 IP를 공유하여 포트 프록시 자체가 불필요하다.
-> 단, mirrored 모드는 일부 네트워크 환경에서 호환성 문제가 있을 수 있다.
->
-> ```ini
-> [wsl2]
-> networkingMode=mirrored
-> ```
-
-### 1.4 Vite 개발 서버 시작 (WSL2)
+### 1.5 Vite 개발 서버 시작 (WSL2)
 
 ```bash
 cd rhwp-studio
@@ -137,27 +107,54 @@ npx vite --host 0.0.0.0 --port 7700 &
 
 ```bash
 cd rhwp-studio
-CHROME_CDP=http://172.21.192.1:19222 node e2e/edit-pipeline.test.mjs --mode=host
+CHROME_CDP=http://localhost:19222 node e2e/edit-pipeline.test.mjs --mode=host
 ```
 
-| 환경변수 | 설명 |
-|---------|------|
-| `CHROME_CDP` | Windows 호스트의 Chrome CDP 주소 |
+| 환경변수/옵션 | 설명 |
+|-------------|------|
+| `CHROME_CDP` | Chrome CDP 주소 (mirrored 모드에서는 `http://localhost:19222`) |
 | `--mode=host` | 호스트 Chrome에 CDP 연결 (기본값) |
 | `--mode=headless` | WSL2 내부 headless Chrome 사용 (시각 확인 불가) |
 
-> **IP 확인**: WSL2에서 Windows 호스트 IP는 `ip route show default | awk '{print $3}'`로 확인 가능.
-> 일반적으로 `172.x.x.1` 형태이다.
+### 2.2 전체 테스트 목록
 
-### 2.2 사용 가능한 테스트
+#### 핵심 테스트
+
+| 테스트 파일 | 설명 | 항목 수 |
+|------------|------|---------|
+| `e2e/edit-pipeline.test.mjs` | 편집 파이프라인 통합 검증 (문단 추가/삭제, 표 삽입, 이미지, 글상자, 대량 편집) | 52 |
+| `e2e/text-flow.test.mjs` | 텍스트 플로우 (입력, 줄바꿈, 엔터, 페이지 넘김, Backspace) | 6 |
+
+#### 기능별 테스트
+
+| 테스트 파일 | 설명 | 샘플 파일 |
+|------------|------|----------|
+| `e2e/blogform.test.mjs` | BlogForm_BookReview.hwp 누름틀 안내문 처리 | BlogForm_BookReview.hwp |
+| `e2e/copy-paste.test.mjs` | 텍스트 블럭 복사/붙여넣기 | — |
+| `e2e/footnote-insert.test.mjs` | 각주 삽입 시 문단 위치 검증 | footnote-01.hwp |
+| `e2e/footnote-vpos.test.mjs` | 각주 편집 시 vpos 이상 검증 | footnote-01.hwp |
+| `e2e/line-spacing.test.mjs` | 줄간격 변경에 따른 페이지 넘김 | — |
+| `e2e/page-break.test.mjs` | 강제 쪽 나누기 | biz_plan.hwp |
+| `e2e/shape-inline.test.mjs` | 도형 인라인 컨트롤 — 커서 이동 및 텍스트 삽입 | — |
+| `e2e/shift-end.test.mjs` | Shift+End 선택 범위 검증 | shift-return.hwp |
+| `e2e/typesetting.test.mjs` | 조판 품질 검증 (문단부호 표시) | — |
+| `e2e/responsive.test.mjs` | 반응형 레이아웃 (뷰포트 크기별) | — |
+| `e2e/hwpctl-basic.test.mjs` | hwpctl API 기본 동작 | — |
+
+#### 디버그용 (수동 확인)
 
 | 테스트 파일 | 설명 |
 |------------|------|
-| `e2e/edit-pipeline.test.mjs` | 편집 파이프라인 검증 (문단 추가/삭제, 표 삽입, 페이지 브레이크 등) |
-| `e2e/text-flow.test.mjs` | 텍스트 플로우 (입력, 줄바꿈, 엔터, 페이지 넘김) |
-| `e2e/page-break.test.mjs` | 페이지 브레이크 테스트 |
-| `e2e/shape-inline.test.mjs` | 인라인 도형 테스트 |
-| `e2e/typesetting.test.mjs` | 조판 테스트 |
+| `e2e/debug-pagination.test.mjs` | 페이지네이션 디버그 |
+| `e2e/debug-table-pos.test.mjs` | 표 위치 디버그 |
+| `e2e/debug-textbox.test.mjs` | 글상자 디버그 |
+
+#### 유틸리티
+
+| 파일 | 설명 |
+|------|------|
+| `e2e/helpers.mjs` | 공통 헬퍼 (테스트 러너, 브라우저 연결, 문서 로드, 검증, 스크린샷, 보고서 생성) |
+| `e2e/report-generator.mjs` | HTML 보고서 생성기 (`TestReporter` 클래스) |
 
 ### 2.3 headless 모드 (CI용)
 
@@ -174,53 +171,96 @@ headless 모드에서는 WSL2 내부의 Chromium을 사용하므로 Windows Chro
 
 ## 3. 테스트 구조
 
-### 3.1 테스트 케이스 규약
+### 3.1 공통 패턴 (`runTest`)
 
-각 테스트 케이스는 새 문서를 생성하고, 첫 문단에 테스트 케이스 제목을 삽입한다:
+모든 테스트는 `helpers.mjs`의 `runTest()` 래퍼를 사용하여 일관된 구조를 따른다:
 
+```javascript
+import { runTest, createNewDocument, clickEditArea, assert, screenshot } from './helpers.mjs';
+
+runTest('테스트 제목', async ({ page, browser }) => {
+  // 새 빈 문서 생성
+  await createNewDocument(page);
+  await clickEditArea(page);
+
+  // 테스트 로직...
+  assert(condition, '검증 메시지');
+  await screenshot(page, 'step-name');
+});
 ```
-TC #N: 테스트명
+
+`runTest()`가 자동으로 처리하는 항목:
+
+| 항목 | 설명 |
+|------|------|
+| 브라우저 연결 | `launchBrowser()` → CDP 또는 headless |
+| 페이지 생성 | `createPage()` → 윈도우 크기 설정 (host: 1280x750, headless: 1280x900) |
+| 앱 로드 | `loadApp()` → Vite 서버 + WASM 초기화 대기 |
+| 에러 처리 | try/catch → 에러 스크린샷 + `process.exitCode = 1` |
+| 탭 정리 | 테스트가 연 탭만 닫기 (호스트 Chrome의 기존 탭 유지) |
+| HTML 보고서 | `output/e2e/{테스트명}-report.html` 자동 생성 |
+
+옵션:
+- `{ skipLoadApp: true }` — 앱 로드 생략 (hwpctl-basic처럼 별도 HTML 페이지 사용 시)
+
+### 3.2 문서 로드 패턴
+
+**새 빈 문서 생성:**
+
+```javascript
+await createNewDocument(page);  // eventBus emit + 캔버스 대기
 ```
 
-이를 통해 Chrome 브라우저에서 현재 어떤 테스트가 실행 중인지 시각적으로 확인할 수 있다.
+**HWP 파일 로드:**
 
-### 3.2 edit-pipeline.test.mjs 테스트 케이스
-
-| TC | 제목 | 검증 내용 |
-|----|------|----------|
-| #1 | 새 문서 생성 | 초기 페이지/문단 수 확인 |
-| #2 | 문단 추가 (Enter) | Enter로 3개 문단 생성, 텍스트 정합, 페이지 수 불변 |
-| #3 | merge paragraph | Backspace로 문단 병합, 텍스트 결합 확인 |
-| #4 | pagination | 50개 문단 생성 → 페이지 넘침 (2페이지+) |
-| #5 | line wrap | 긴 텍스트 입력 → 자동 줄바꿈 |
-| #6 | table insert | 텍스트 → 표(2x2) → 텍스트 구조, SVG 렌더링 |
-| #7 | page break | 페이지 브레이크 삽입 → 페이지 수 증가 |
-| #8 | vpos cascade | 문단 높이 변경 → 후속 문단 위치 전파 |
-| #9 | stability | 분할/병합 5회 반복 후 텍스트/문단 수 보존 |
-| #10 | page boundary enter | 페이지 경계에서 Enter → 페이지 넘침 |
-| #11 | page boundary backspace | 페이지 경계에서 Backspace → 페이지 줄어듦 |
-| #12 | cell height | 셀[0,0] 짧은 텍스트 + 셀[1,1] 긴 텍스트 → 행 높이 변경 |
-| #13 | cell split | 분할 전 표 → 분할 후 표 비교 (셀 내 Enter) |
-| #14 | delete vpos | 텍스트 삭제 → 줄 수 감소 → vpos cascade |
-| #15 | table push | 표 앞에서 Enter → 표 밀림 + 페이지 넘침 |
-| #16 | image insert | 이미지 삽입 → 문단 높이 변경, 렌더링 확인 |
-| #17 | textbox edit | 글상자 삽입 + 내부 텍스트 편집 + 앞/뒤 문단 배치 |
-| #18 | file edit | 문서 편집 후 문단 수/텍스트/페이지 일관성 |
-| #19 | mass edit | 100회 Enter → 대량 편집 안정성 |
+```javascript
+const { pageCount } = await loadHwpFile(page, 'biz_plan.hwp');
+// samples/ 폴더에서 fetch → WASM loadDocument → 캔버스 대기
+```
 
 ### 3.3 헬퍼 함수 (helpers.mjs)
+
+#### 브라우저/페이지 생명주기
 
 | 함수 | 설명 |
 |------|------|
 | `launchBrowser()` | Chrome CDP 연결 또는 headless 시작 |
+| `createPage(browser, width?, height?)` | 테스트용 탭 생성 + 크기 설정 |
+| `closePage(page)` | 탭 닫기 |
+| `closeBrowser(browser)` | 테스트 탭 닫기 + CDP disconnect 또는 headless close |
+
+#### 앱/문서 로드
+
+| 함수 | 설명 |
+|------|------|
 | `loadApp(page)` | Vite 서버에서 앱 로드 + WASM 초기화 대기 |
-| `clickEditArea(page)` | 캔버스 클릭하여 편집 포커스 |
+| `createNewDocument(page)` | 새 빈 문서 생성 + 캔버스 대기 |
+| `loadHwpFile(page, filename)` | HWP 파일 fetch + loadDocument + 캔버스 대기 |
+| `waitForCanvas(page, timeout?)` | 편집 영역 캔버스 대기 |
+
+#### 편집/입력
+
+| 함수 | 설명 |
+|------|------|
+| `clickEditArea(page)` | 편집 영역 캔버스 클릭하여 포커스 |
 | `typeText(page, text)` | 키보드로 텍스트 입력 (글자별 30ms 지연) |
-| `pressEnter(page)` | Enter 키 입력 |
-| `screenshot(page, name)` | 스크린샷 저장 (`e2e/screenshots/`) |
+
+#### 조회/검증
+
+| 함수 | 설명 |
+|------|------|
 | `getPageCount(page)` | WASM API로 페이지 수 조회 |
-| `getParagraphCount(page)` | WASM API로 문단 수 조회 |
-| `closeBrowser(browser)` | 브라우저 정리 |
+| `getParagraphCount(page, secIdx?)` | WASM API로 문단 수 조회 |
+| `getParaText(page, secIdx, paraIdx, maxLen?)` | WASM API로 문단 텍스트 조회 |
+| `assert(condition, message)` | PASS/FAIL 출력 + 리포터 자동 기록 |
+| `screenshot(page, name)` | 스크린샷 저장 + 리포터에 자동 연결 |
+
+#### 테스트 러너
+
+| 함수 | 설명 |
+|------|------|
+| `runTest(title, testFn, options?)` | 테스트 실행 래퍼 (생명주기 + 에러 처리 + 보고서) |
+| `setTestCase(name)` | 보고서 내 테스트 케이스 그룹명 설정 |
 
 ### 3.4 WASM API 직접 호출
 
@@ -229,149 +269,95 @@ TC #N: 테스트명
 ```javascript
 const result = await page.evaluate(() => {
   const w = window.__wasm;
-  
+
   // 텍스트 삽입
   w.doc.insertText(0, 0, 0, 'Hello');
-  
+
   // 문단 분할
   w.doc.splitParagraph(0, 0, 5);
-  
+
   // 표 삽입
   const tr = JSON.parse(w.doc.createTable(0, 1, 0, 2, 2));
-  
+
   // 셀 텍스트 삽입
   w.doc.insertTextInCell(0, tr.paraIdx, tr.controlIdx, 0, 0, 0, 'Cell');
-  
+
   // 페이지 브레이크
   w.doc.insertPageBreak(0, 0, 5);
-  
+
   // 문단 병합
   w.doc.mergeParagraph(0, 1);
-  
+
   // 캔버스 재렌더링 트리거 (WASM API 직접 호출 후 필수)
   window.__eventBus?.emit('document-changed');
-  
+
   return { pageCount: w.doc.pageCount() };
 });
 ```
 
 > **중요**: WASM API를 직접 호출한 후에는 반드시 `window.__eventBus?.emit('document-changed')`를
-> 호출하여 캔버스를 갱신해야 화면에 반영된다. 키보드 입력(`typeText`, `pressEnter`)은 자동으로 처리된다.
+> 호출하여 캔버스를 갱신해야 화면에 반영된다. 키보드 입력(`typeText`)은 자동으로 처리된다.
 
 ---
 
-## 4. 스크린샷
+## 4. HTML 테스트 보고서
 
-테스트 실행 시 각 단계의 스크린샷이 `rhwp-studio/e2e/screenshots/` 폴더에 저장된다:
+모든 테스트 실행 시 `output/e2e/` 폴더에 HTML 보고서가 자동 생성된다.
+
+### 4.1 보고서 파일
+
+`runTest()`를 사용하는 테스트는 자동으로 보고서를 생성한다:
 
 ```
-e2e/screenshots/
-  edit-01-split.png        # TC #2 결과
-  edit-03-merge.png        # TC #3 결과
-  edit-04-many-paragraphs.png
-  edit-05-long-text.png
-  edit-06-table-insert.png # TC #6 결과 (텍스트→표→텍스트)
-  edit-07-page-break.png
-  edit-08-vpos-cascade.png
-  edit-09-stability.png
-  edit-final.png           # 최종 상태
+output/e2e/
+  blogform-report.html
+  copy-paste-report.html
+  debug-pagination-report.html
+  debug-table-pos-report.html
+  debug-textbox-report.html
+  edit-pipeline-report.html
+  footnote-insert-report.html
+  footnote-vpos-report.html
+  hwpctl-basic-report.html
+  line-spacing-report.html
+  page-break-report.html
+  responsive-report.html
+  shape-inline-report.html
+  shift-end-report.html
+  text-flow-report.html
+  typesetting-report.html
 ```
 
-테스트 실패 시 해당 시점의 스크린샷으로 문제를 확인할 수 있다.
-
----
-
-## 5. 새 테스트 추가 방법
-
-### 5.1 기본 템플릿
-
-```javascript
-// ── N. 테스트 설명 ──
-console.log('\n[N] 테스트 설명...');
-await createNewDocument(page);
-await clickEditArea(page);
-
-const result = await page.evaluate(() => {
-  const w = window.__wasm;
-  if (!w?.doc) return { error: 'no doc' };
-  try {
-    // 제목 삽입
-    w.doc.insertText(0, 0, 0, 'TC #N: 테스트명');
-    w.doc.splitParagraph(0, 0, /* 제목 길이 */);
-    
-    // 테스트 로직...
-    
-    // 캔버스 갱신
-    window.__eventBus?.emit('document-changed');
-    
-    return { /* 검증 데이터 */, ok: true };
-  } catch (e) { return { error: e.message }; }
-});
-await page.evaluate(() => new Promise(r => setTimeout(r, 300)));
-
-if (result.error) {
-  console.log(`  SKIP: ${result.error}`);
-} else {
-  check(result.ok, `테스트 통과`);
-  // 추가 검증...
-}
-await screenshot(page, 'edit-NN-name');
-```
-
-### 5.2 검증 패턴
-
-| 패턴 | 사용 함수 |
-|------|----------|
-| 문단 텍스트 확인 | `w.doc.getTextRange(sec, para, offset, count)` |
-| 셀 텍스트 확인 | `w.doc.getTextInCell(sec, para, ctrl, cell, cellPara, offset, count)` |
-| 문단 수 확인 | `w.doc.getParagraphCount(sec)` |
-| 페이지 수 확인 | `w.doc.pageCount()` |
-| 줄 정보 확인 | `JSON.parse(w.doc.getLineInfo(sec, para, offset))` |
-| SVG 렌더링 확인 | `w.doc.renderPageSvg(pageNum)` |
-
----
-
-## 6. HTML 테스트 보고서
-
-테스트 실행이 완료되면 `output/e2e/report.html`에 HTML 보고서가 자동 생성된다.
-
-### 6.1 보고서 내용
+### 4.2 보고서 내용
 
 - **요약 대시보드**: Total / Passed / Failed / Skipped 카운트
 - **TC별 카드**: 각 테스트 케이스의 assertion 결과 + 스크린샷
 - **스크린샷 인라인**: base64로 인코딩되어 별도 파일 없이 단일 HTML로 확인 가능
 
-### 6.2 보고서 확인
+### 4.3 보고서 확인
 
 ```bash
 # 테스트 실행 (보고서 자동 생성)
 cd rhwp-studio
-node e2e/edit-pipeline.test.mjs --mode=host
+CHROME_CDP=http://localhost:19222 node e2e/copy-paste.test.mjs --mode=host
 
-# 보고서 열기 (Windows)
-explorer.exe "$(wslpath -w ../output/e2e/report.html)"
-
-# 또는 브라우저에서 직접 열기
-# file:///C:/Users/<사용자>/mygithub/rhwp/output/e2e/report.html
+# 보고서 열기 (Windows — WSL2에서 실행)
+explorer.exe "$(wslpath -w ../output/e2e/copy-paste-report.html)"
 ```
 
-### 6.3 보고서 구조
+### 4.4 assert와 screenshot의 리포터 연동
 
-```
-output/e2e/
-  report.html          ← HTML 보고서 (스크린샷 인라인 포함)
+`assert()`는 PASS/FAIL을 콘솔에 출력하는 동시에 내장 리포터에 자동 기록한다.
+`screenshot()`은 스크린샷을 파일로 저장하고, 리포터의 마지막 assertion에 자동 연결한다.
 
-rhwp-studio/e2e/
-  screenshots/         ← 개별 스크린샷 PNG 파일
-    edit-01-split.png
-    edit-03-merge.png
-    ...
-    edit-final.png
+```javascript
+await screenshot(page, 'step-01');      // 스크린샷 저장
+assert(count === 1, '페이지 수 = 1');   // PASS/FAIL + 리포터 기록 + 스크린샷 연결
 ```
 
-### 6.4 커스텀 보고서 생성
+### 4.5 자체 리포터 사용 (edit-pipeline, responsive)
 
-`report-generator.mjs`의 `TestReporter` 클래스를 사용하여 다른 테스트에서도 보고서를 생성할 수 있다:
+`TestReporter` 클래스를 직접 사용하면 테스트 케이스 그룹화 등 세밀한 제어가 가능하다:
 
 ```javascript
 import { TestReporter } from './report-generator.mjs';
@@ -385,6 +371,77 @@ reporter.generate('../output/e2e/my-report.html');
 
 ---
 
+## 5. 스크린샷
+
+테스트 실행 시 각 단계의 스크린샷이 `rhwp-studio/e2e/screenshots/` 폴더에 저장된다.
+스크린샷은 HTML 보고서에 base64로 인라인 포함된다.
+
+```
+rhwp-studio/e2e/screenshots/
+  cp-01-typed.png
+  cp-02-pasted.png
+  cp-03-final.png
+  edit-01-split.png
+  edit-06-table-insert.png
+  ...
+  error.png              ← 에러 발생 시 자동 촬영
+```
+
+---
+
+## 6. 새 테스트 추가 방법
+
+### 6.1 새 빈 문서 테스트
+
+```javascript
+import {
+  runTest, createNewDocument, clickEditArea, typeText,
+  screenshot, assert, getPageCount,
+} from './helpers.mjs';
+
+runTest('나의 새 테스트', async ({ page }) => {
+  await createNewDocument(page);
+  await clickEditArea(page);
+
+  await typeText(page, 'Hello World');
+  await screenshot(page, 'my-01-input');
+
+  const pages = await getPageCount(page);
+  assert(pages === 1, `페이지 수 확인: ${pages}`);
+});
+```
+
+### 6.2 HWP 파일 로드 테스트
+
+```javascript
+import { runTest, loadHwpFile, screenshot, assert } from './helpers.mjs';
+
+runTest('나의 파일 테스트', async ({ page }) => {
+  const { pageCount } = await loadHwpFile(page, 'my-sample.hwp');
+  assert(pageCount >= 1, `문서 로드 성공 (${pageCount}페이지)`);
+  await screenshot(page, 'my-01-loaded');
+
+  // WASM API 직접 호출
+  const text = await page.evaluate(() =>
+    window.__wasm?.getTextRange(0, 0, 0, 50) ?? ''
+  );
+  assert(text.includes('기대하는 텍스트'), `첫 문단 텍스트 확인`);
+});
+```
+
+### 6.3 검증 패턴
+
+| 패턴 | 사용 함수 |
+|------|----------|
+| 문단 텍스트 확인 | `getParaText(page, sec, para)` 또는 `w.doc.getTextRange(sec, para, offset, count)` |
+| 셀 텍스트 확인 | `w.doc.getTextInCell(sec, para, ctrl, cell, cellPara, offset, count)` |
+| 문단 수 확인 | `getParagraphCount(page, sec)` 또는 `w.doc.getParagraphCount(sec)` |
+| 페이지 수 확인 | `getPageCount(page)` 또는 `w.doc.pageCount()` |
+| 줄 정보 확인 | `JSON.parse(w.doc.getLineInfo(sec, para, offset))` |
+| SVG 렌더링 확인 | `w.doc.renderPageSvg(pageNum)` |
+
+---
+
 ## 7. 트러블슈팅
 
 ### CDP 연결 실패
@@ -393,18 +450,20 @@ reporter.generate('../output/e2e/my-report.html');
 TypeError: Failed to fetch browser webSocket URL
 ```
 
-- Chrome이 디버깅 모드로 실행 중인지 확인
-- `CHROME_CDP` 환경변수의 IP/포트가 맞는지 확인
-- Windows 방화벽이 해당 포트를 차단하지 않는지 확인
+- Chrome이 디버깅 모드로 실행 중인지 확인 (`start chrome --remote-debugging-port=19222 ...`)
+- `CHROME_CDP=http://localhost:19222`로 설정되어 있는지 확인
+- 포트 프록시 설정 확인: `netsh interface portproxy show v4tov4`
+- WSL2에서 연결 테스트: `curl -s http://localhost:19222/json/version`
 
 ### 캔버스를 찾을 수 없음
 
 ```
-Error: 캔버스를 찾을 수 없습니다
+Error: 편집 영역 캔버스를 찾을 수 없습니다
 ```
 
 - Vite 개발 서버가 `0.0.0.0:7700`에서 실행 중인지 확인
 - WASM 빌드(`pkg/`)가 최신인지 확인
+- 새 문서 생성 또는 파일 로드 후 캔버스가 생성되었는지 확인
 
 ### WASM API 호출 후 화면 미갱신
 
@@ -416,3 +475,12 @@ Error: 캔버스를 찾을 수 없습니다
 - `typeText` 대신 `page.keyboard.type(text, { delay: 5 })`로 빠르게 입력
 - WASM API 직접 호출로 전환 (키보드 입력보다 안정적)
 - 안정화 대기 시간 증가 (`setTimeout` 값 조정)
+
+### 샘플 파일 누락
+
+```
+Error: 파일 로드 실패 (biz_plan.hwp): HTTP 404
+```
+
+- `rhwp-studio/public/samples/` 폴더에 해당 HWP 파일이 있는지 확인
+- `samples/` 폴더에서 복사: `cp samples/biz_plan.hwp rhwp-studio/public/samples/`

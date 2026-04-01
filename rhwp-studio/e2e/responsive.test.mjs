@@ -3,7 +3,7 @@
  *
  * 데스크톱 / 태블릿 / 모바일 뷰포트에서 레이아웃을 확인한다.
  */
-import { launchBrowser, loadApp, screenshot, closeBrowser } from './helpers.mjs';
+import { launchBrowser, loadApp, screenshot, closeBrowser, closePage, createPage, createNewDocument } from './helpers.mjs';
 import { TestReporter } from './report-generator.mjs';
 
 const VIEWPORTS = [
@@ -29,8 +29,7 @@ async function run() {
     const tc = `${vp.name} (${vp.width}x${vp.height})`;
     console.log(`\n[${vp.name}] ${vp.width}x${vp.height}...`);
 
-    const page = await browser.newPage();
-    await page.setViewport({ width: vp.width, height: vp.height });
+    const page = await createPage(browser, vp.width, vp.height);
 
     try {
       await loadApp(page);
@@ -101,7 +100,7 @@ async function run() {
       reporter.fail(tc, err.message);
       failed++;
     } finally {
-      await page.close();
+      await closePage(page);
     }
   }
 

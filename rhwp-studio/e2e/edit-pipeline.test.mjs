@@ -13,33 +13,13 @@
  *
  * 실행: node e2e/edit-pipeline.test.mjs [--mode=host|headless]
  */
-import { launchBrowser, loadApp, clickEditArea, typeText, screenshot, closeBrowser } from './helpers.mjs';
+import {
+  launchBrowser, loadApp, clickEditArea, typeText, screenshot,
+  closeBrowser, createPage, closePage,
+  getPageCount, getParagraphCount as getParaCount, getParaText,
+  createNewDocument,
+} from './helpers.mjs';
 import { TestReporter } from './report-generator.mjs';
-
-/** WASM bridge 통해 페이지 수 조회 */
-async function getPageCount(page) {
-  return await page.evaluate(() => window.__wasm?.pageCount ?? 0);
-}
-
-/** WASM bridge 통해 문단 수 조회 */
-async function getParaCount(page, secIdx = 0) {
-  return await page.evaluate((s) => window.__wasm?.getParagraphCount(s) ?? -1, secIdx);
-}
-
-/** WASM bridge 통해 문단 텍스트 조회 */
-async function getParaText(page, secIdx, paraIdx) {
-  return await page.evaluate((s, p) => {
-    try { return window.__wasm?.getTextRange(s, p, 0, 200) ?? ''; }
-    catch { return ''; }
-  }, secIdx, paraIdx);
-}
-
-/** 새 문서 생성 및 안정화 대기 */
-async function createNewDocument(page) {
-  await page.evaluate(() => window.__eventBus?.emit('create-new-document'));
-  await page.waitForSelector('canvas', { timeout: 10000 });
-  await page.evaluate(() => new Promise(r => setTimeout(r, 1000)));
-}
 
 /** Enter 키 입력 */
 async function pressEnter(page) {
@@ -54,8 +34,7 @@ async function run() {
   console.log('=== E2E: 편집 파이프라인 테스트 (Issue #2) ===\n');
 
   const browser = await launchBrowser();
-  const page = await browser.newPage();
-  await page.setViewport({ width: 1280, height: 900 });
+  const page = await createPage(browser);
 
   let passed = 0;
   let failed = 0;
@@ -915,7 +894,7 @@ async function run() {
     if (failed > 0) process.exitCode = 1;
 
     // HTML 보고서 생성
-    reporter.generate('../output/e2e/report.html');
+    reporter.generate('../output/e2e/edit-pipeline-report.html');
 
   } catch (err) {
     console.error('테스트 오류:', err.message);
@@ -923,7 +902,7 @@ async function run() {
     process.exitCode = 1;
   } finally {
     await snap('edit-final');
-    await page.close();
+    await closePage(page);
     await closeBrowser(browser);
   }
 }

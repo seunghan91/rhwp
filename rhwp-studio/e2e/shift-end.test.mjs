@@ -1,111 +1,67 @@
-import { launchBrowser, closeBrowser, createPage, loadApp, screenshot, assert } from './helpers.mjs';
+/**
+ * E2E 테스트: shift-return.hwp Shift+End 블록 선택
+ */
+import { runTest, loadHwpFile, screenshot, assert } from './helpers.mjs';
 
-const VITE_URL = process.env.VITE_URL || 'http://localhost:7700';
+runTest('Shift+End 블록 선택 테스트', async ({ page }) => {
+  // 1. 문서 로드
+  const { pageCount } = await loadHwpFile(page, 'shift-return.hwp');
+  console.log(`  페이지 수: ${pageCount}`);
+  await new Promise(r => setTimeout(r, 2000));
 
-async function run() {
-  const browser = await launchBrowser();
-  const page = await createPage(browser);
+  // 2. 첫 번째 문단 시작 위치 클릭
+  const canvas = await page.$('#scroll-container canvas');
+  const box = await canvas.boundingBox();
+  await page.mouse.click(box.x + 160, box.y + 135);
+  await new Promise(r => setTimeout(r, 500));
 
-  try {
-    await loadApp(page, VITE_URL, 'shift-return.hwp');
-    await page.waitForSelector('canvas', { timeout: 5000 });
-    await new Promise(r => setTimeout(r, 2000));
+  const cursorPos = await page.evaluate(() => {
+    const ih = window.__inputHandler;
+    return ih?.getCursorPosition?.() ?? null;
+  });
+  console.log(`커서 위치 (클릭 후): ${JSON.stringify(cursorPos)}`);
 
-    // 첫 번째 문단 시작 위치 클릭
-    const canvas = await page.$('canvas');
-    const box = await canvas.boundingBox();
-    // 문단 시작 근처 클릭 (왼쪽 여백 + 약간 안쪽)
-    await page.mouse.click(box.x + 160, box.y + 135);
-    await new Promise(r => setTimeout(r, 500));
+  // 3. cursor API 직접 호출로 Shift+End 시뮬레이션
+  console.log('cursor API 직접 호출...');
+  const lineInfo = await page.evaluate(() => {
+    try { return window.__wasm?.doc.getLineInfo(0, 0, 0); } catch { return null; }
+  });
+  console.log(`getLineInfo(0,0,0): ${JSON.stringify(lineInfo)}`);
 
-    // 커서 위치 확인
-    const pos1 = await page.evaluate(() => {
-      const ih = window.__inputHandler;
-      return ih?.cursor?.position;
-    });
-    console.log('커서 위치 (클릭 후):', JSON.stringify(pos1));
-
-    // 콘솔 에러 수집
-    const consoleErrors = [];
-    page.on('console', msg => {
-      if (msg.type() === 'error' || msg.type() === 'warn') {
-        consoleErrors.push(msg.text());
-      }
-    });
-
-    // textarea에 focus 확인
-    await page.evaluate(() => {
-      const ta = document.querySelector('textarea');
-      if (ta) ta.focus();
-    });
-    await new Promise(r => setTimeout(r, 200));
-
-    // 직접 cursor API 호출로 테스트
-    console.log('cursor API 직접 호출...');
-    const lineInfo = await page.evaluate(() => {
-      const ih = window.__inputHandler;
-      if (!ih) return { error: 'no inputHandler' };
-      try {
-        const li = ih.wasm.getLineInfo(0, 0, 0);
-        return { lineInfo: li };
-      } catch(e) {
-        return { error: e.message };
-      }
-    });
-    console.log('getLineInfo(0,0,0):', JSON.stringify(lineInfo));
-
-    // setAnchor + moveToLineEnd 직접 호출
-    const result = await page.evaluate(() => {
-      const ih = window.__inputHandler;
-      if (!ih) return { error: 'no inputHandler' };
-      try {
-        ih.cursor.setAnchor();
-        ih.cursor.moveToLineEnd();
-        return {
-          hasSelection: ih.cursor.hasSelection(),
-          position: ih.cursor.position,
-          anchor: ih.cursor.selectionAnchor,
-        };
-      } catch(e) {
-        return { error: e.message };
-      }
-    });
-    console.log('직접 호출 결과:', JSON.stringify(result));
-
-    // 콘솔 에러 출력
-    for (const err of consoleErrors) {
-      console.log('  console:', err);
-    }
-    await new Promise(r => setTimeout(r, 500));
-
-    // 선택 상태 확인
-    const selState = await page.evaluate(() => {
-      const ih = window.__inputHandler;
-      const cursor = ih?.cursor;
+  const shiftEndResult = await page.evaluate(() => {
+    const ih = window.__inputHandler;
+    if (!ih) return { error: 'no inputHandler' };
+    try {
+      ih.handleShiftEnd?.();
       return {
-        hasSelection: cursor?.hasSelection(),
-        anchor: cursor?.selectionAnchor,
-        position: cursor?.position,
+        hasSelection: ih.hasSelection?.() ?? false,
+        position: ih.getCursorPosition?.(),
       };
-    });
-    console.log('선택 상태 (Shift+End 후):', JSON.stringify(selState));
+    } catch (e) { return { error: e.message }; }
+  });
+  console.log(`직접 호출 결과: ${JSON.stringify(shiftEndResult)}`);
 
-    // 선택 하이라이트 존재 확인
-    const highlights = await page.$$('.selection-layer div');
-    console.log('선택 하이라이트 수:', highlights.length);
+  // 4. Shift+End 키 입력
+  await page.keyboard.down('Shift');
+  await page.keyboard.press('End');
+  await page.keyboard.up('Shift');
+  await new Promise(r => setTimeout(r, 300));
 
-    await screenshot(page, 'shift-end-result');
+  const selState = await page.evaluate(() => {
+    const ih = window.__inputHandler;
+    return {
+      hasSelection: ih?.hasSelection?.() ?? false,
+      position: ih?.getCursorPosition?.(),
+    };
+  });
+  console.log(`선택 상태 (Shift+End 후): ${JSON.stringify(selState)}`);
 
-    assert(selState.hasSelection === true, 'Shift+End 후 선택 상태여야 함');
-    assert(highlights.length > 0, '선택 하이라이트가 표시되어야 함');
+  const highlights = await page.evaluate(() =>
+    document.querySelectorAll('.selection-highlight').length
+  );
+  console.log(`선택 하이라이트 수: ${highlights}`);
+  await screenshot(page, 'shift-end-result');
 
-    console.log('✅ Shift+End 테스트 통과');
-  } catch (err) {
-    await screenshot(page, 'shift-end-error');
-    console.error('❌ 테스트 실패:', err.message);
-  } finally {
-    await closeBrowser(browser);
-  }
-}
-
-run();
+  assert(selState.hasSelection, 'Shift+End 후 선택 상태여야 함');
+  assert(highlights > 0, '선택 하이라이트가 표시되어야 함');
+});
