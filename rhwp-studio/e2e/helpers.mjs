@@ -43,24 +43,29 @@ export async function launchBrowser() {
   return browser;
 }
 
-/** 테스트용 페이지 생성 + 크기 설정 */
-export async function createPage(browser, width = 1280, height = 900) {
+/** 테스트용 페이지 생성 + 크기 설정
+ * host 모드: width/height 미지정 시 호스트 윈도우 크기 그대로 사용
+ * headless 모드: 기본 1280x900
+ */
+export async function createPage(browser, width, height) {
   if (MODE === 'headless') {
     const page = await browser.newPage();
-    await page.setViewport({ width, height });
+    await page.setViewport({ width: width || 1280, height: height || 900 });
     return page;
   }
-  // host 모드: 새 탭 열기 + 윈도우 크기 설정 + 리사이즈 안정화 대기
+  // host 모드: 새 탭 열기
   const page = await browser.newPage();
-  const session = await page.createCDPSession();
-  const { windowId } = await session.send('Browser.getWindowForTarget');
-  await session.send('Browser.setWindowBounds', {
-    windowId,
-    bounds: { width, height, windowState: 'normal' },
-  });
-  await session.detach();
-  // 리사이즈 반영 대기
-  await new Promise(r => setTimeout(r, 1000));
+  // 크기가 지정된 경우에만 윈도우 리사이즈
+  if (width && height) {
+    const session = await page.createCDPSession();
+    const { windowId } = await session.send('Browser.getWindowForTarget');
+    await session.send('Browser.setWindowBounds', {
+      windowId,
+      bounds: { width, height, windowState: 'normal' },
+    });
+    await session.detach();
+    await new Promise(r => setTimeout(r, 1000));
+  }
   return page;
 }
 
