@@ -56,13 +56,22 @@ netsh interface portproxy show v4tov4
 | `connectport=19222` | Chrome CDP 포트와 동일 |
 | `connectaddress=172.21.192.102` | WSL2의 IP (재부팅 시 변경될 수 있음) |
 
-> **주의**: WSL2 IP는 재부팅마다 변경된다. 변경 시 포트 프록시를 재설정해야 한다.
+Windows 방화벽이 활성화된 경우 인바운드 룰도 추가해야 한다:
+
+```powershell
+netsh advfirewall firewall add rule name="WSL2 CDP Proxy" dir=in action=allow protocol=TCP localport=19222 remoteip=172.21.192.102
+```
+
+> **주의**: WSL2 IP는 재부팅마다 변경된다. 변경 시 포트 프록시와 방화벽 룰을 재설정해야 한다.
 >
 > ```powershell
-> # 기존 설정 삭제
+> # 포트 프록시 재설정
 > netsh interface portproxy delete v4tov4 listenport=19222 listenaddress=0.0.0.0
-> # 새 IP로 재설정
 > netsh interface portproxy add v4tov4 listenport=19222 listenaddress=0.0.0.0 connectport=19222 connectaddress=<새 WSL2 IP>
+>
+> # 방화벽 룰 재설정
+> netsh advfirewall firewall delete rule name="WSL2 CDP Proxy"
+> netsh advfirewall firewall add rule name="WSL2 CDP Proxy" dir=in action=allow protocol=TCP localport=19222 remoteip=<새 WSL2 IP>
 > ```
 
 ### 1.4 Vite 개발 서버 시작 (WSL2)
