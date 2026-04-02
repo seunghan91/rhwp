@@ -404,17 +404,22 @@ impl LayoutEngine {
                 }
             }
 
-            // 텍스트 세그먼트 뒤의 표 배치 (마지막 세그먼트 뒤에도 있을 수 있음)
+            // 텍스트 세그먼트 뒤의 표 배치
+            // 표 하단 = 베이스라인 + outer_margin_bottom
             if table_idx < inline_tables.len() {
                 let (ctrl_idx, tbl) = &inline_tables[table_idx];
                 let mt = measured_tables.iter().find(|mt|
                     mt.para_index == para_index && mt.control_index == *ctrl_idx
                 );
                 let tw = table_widths[table_idx];
+                let tbl_h = mt.map(|m| m.total_height)
+                    .unwrap_or_else(|| hwpunit_to_px(tbl.common.height as i32, self.dpi));
+                let om_bottom = hwpunit_to_px(tbl.outer_margin_bottom as i32, self.dpi);
+                let tbl_y = (current_y + baseline_dist + om_bottom - tbl_h).max(current_y);
 
                 let table_bottom = self.layout_table(
                     tree, col_node, tbl,
-                    section_index, styles, col_area, y,
+                    section_index, styles, col_area, tbl_y,
                     bin_data_content, mt, 0,
                     Some((para_index, *ctrl_idx)),
                     Alignment::Left, None, 0.0, 0.0,
@@ -436,10 +441,14 @@ impl LayoutEngine {
                 mt.para_index == para_index && mt.control_index == *ctrl_idx
             );
             let tw = table_widths[table_idx];
+            let tbl_h = mt.map(|m| m.total_height)
+                .unwrap_or_else(|| hwpunit_to_px(tbl.common.height as i32, self.dpi));
+            let om_bottom = hwpunit_to_px(tbl.outer_margin_bottom as i32, self.dpi);
+            let tbl_y = (current_y + baseline_dist + om_bottom - tbl_h).max(current_y);
 
             let table_bottom = self.layout_table(
                 tree, col_node, tbl,
-                section_index, styles, col_area, y,
+                section_index, styles, col_area, tbl_y,
                 bin_data_content, mt, 0,
                 Some((para_index, *ctrl_idx)),
                 Alignment::Left, None, 0.0, 0.0,
@@ -1472,11 +1481,13 @@ impl LayoutEngine {
                             }
                         }
                         // 인라인 TAC 표: 텍스트 흐름 위치에 직접 렌더링
+                        // 표 하단 = 베이스라인 + outer_margin_bottom
                         if let (Some(p), Some(bdc)) = (para, bin_data_content) {
                             if let Some(Control::Table(t)) = p.controls.get(tac_ci) {
                                 if t.common.treat_as_char {
                                     let table_h = hwpunit_to_px(t.common.height as i32, self.dpi);
-                                    let table_y = (y + line_height - table_h).max(y);
+                                    let om_bottom = hwpunit_to_px(t.outer_margin_bottom as i32, self.dpi);
+                                    let table_y = (y + baseline + om_bottom - table_h).max(y);
                                     self.layout_table(
                                         tree, col_node, t,
                                         section_index, styles, col_area,
