@@ -605,9 +605,14 @@ impl DocumentCore {
         let composed = compose_paragraph(para);
         self.composed[section_idx].insert(para_idx, composed);
         self.mark_section_dirty(section_idx);
-        // 문단 삽입 시 prev_measured 인덱스와 불일치하므로 전체 재측정 강제
+        // 문단 삽입 시 prev_measured의 para_index가 불일치하므로 전체 재측정 강제
+        // dirty_paragraphs=None → measure_section_selective가 incremental로 폴백
+        // measured_sections 초기화 → incremental이 아닌 measure_section(완전 재측정)으로 폴백
         if section_idx < self.dirty_paragraphs.len() {
             self.dirty_paragraphs[section_idx] = None;
+        }
+        if section_idx < self.measured_sections.len() {
+            self.measured_sections[section_idx] = MeasuredSection { paragraphs: Vec::new(), tables: Vec::new() };
         }
     }
 
@@ -618,9 +623,12 @@ impl DocumentCore {
             self.composed[section_idx].remove(para_idx);
         }
         self.mark_section_dirty(section_idx);
-        // 문단 제거 시 prev_measured 인덱스와 불일치하므로 전체 재측정 강제
+        // 문단 제거 시 prev_measured의 para_index가 불일치하므로 전체 재측정 강제
         if section_idx < self.dirty_paragraphs.len() {
             self.dirty_paragraphs[section_idx] = None;
+        }
+        if section_idx < self.measured_sections.len() {
+            self.measured_sections[section_idx] = MeasuredSection { paragraphs: Vec::new(), tables: Vec::new() };
         }
     }
 

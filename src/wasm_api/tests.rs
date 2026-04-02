@@ -15195,6 +15195,125 @@
         }
     }
 
+    /// 13페이지 엔터 후 페이지 전파 범위 분석
+    #[test]
+    fn test_page13_enter_propagation() {
+        use crate::renderer::pagination::PageItem;
+
+        let bytes = std::fs::read("samples/kps-ai.hwp").expect("kps-ai.hwp 읽기 실패");
+        let mut doc = HwpDocument::from_bytes(&bytes).unwrap();
+        doc.convert_to_editable_native().unwrap();
+        doc.paginate();
+
+        let pages_before = doc.pagination[0].pages.len();
+
+        // 분할 전: 각 페이지의 첫 번째/마지막 아이템의 para_index 기록
+        let mut before_pages: Vec<(usize, usize, usize)> = Vec::new(); // (first_pi, last_pi, item_count)
+        for page in &doc.pagination[0].pages {
+            let items = &page.column_contents[0].items;
+            let first = items.first().map(|it| match it {
+                PageItem::FullParagraph { para_index } |
+                PageItem::Table { para_index, .. } |
+                PageItem::PartialParagraph { para_index, .. } |
+                PageItem::PartialTable { para_index, .. } |
+                PageItem::Shape { para_index, .. } => *para_index,
+            }).unwrap_or(0);
+            let last = items.last().map(|it| match it {
+                PageItem::FullParagraph { para_index } |
+                PageItem::Table { para_index, .. } |
+                PageItem::PartialParagraph { para_index, .. } |
+                PageItem::PartialTable { para_index, .. } |
+                PageItem::Shape { para_index, .. } => *para_index,
+            }).unwrap_or(0);
+            before_pages.push((first, last, items.len()));
+        }
+
+        // page 13 (idx=12)의 pi=199 앞에서 엔터
+        eprintln!("=== splitParagraph(0, 199, 0) ===");
+        let result = doc.split_paragraph_native(0, 199, 0).unwrap();
+        assert!(result.contains("\"ok\":true"));
+
+        let pages_after = doc.pagination[0].pages.len();
+        eprintln!("pages: {} → {}", pages_before, pages_after);
+
+        // 분할 후: 각 페이지 비교
+        let mut last_diff_page = 0;
+        for (pidx, page) in doc.pagination[0].pages.iter().enumerate() {
+            let items = &page.column_contents[0].items;
+            let first = items.first().map(|it| match it {
+                PageItem::FullParagraph { para_index } |
+                PageItem::Table { para_index, .. } |
+                PageItem::PartialParagraph { para_index, .. } |
+                PageItem::PartialTable { para_index, .. } |
+                PageItem::Shape { para_index, .. } => *para_index,
+            }).unwrap_or(0);
+            let last = items.last().map(|it| match it {
+                PageItem::FullParagraph { para_index } |
+                PageItem::Table { para_index, .. } |
+                PageItem::PartialParagraph { para_index, .. } |
+                PageItem::PartialTable { para_index, .. } |
+                PageItem::Shape { para_index, .. } => *para_index,
+            }).unwrap_or(0);
+
+            let before = before_pages.get(pidx);
+            let changed = before.map(|b| b.0 != first || b.1 != last || b.2 != items.len()).unwrap_or(true);
+
+            if changed {
+                last_diff_page = pidx;
+                let before_str = before.map(|b| format!("pi={}-{} ({}items)", b.0, b.1, b.2))
+                    .unwrap_or_else(|| "(신규)".to_string());
+                eprintln!("  page {:2}: {} → pi={}-{} ({}items) ← CHANGED",
+                    pidx + 1, before_str, first, last, items.len());
+            }
+        }
+        eprintln!("전파 범위: page 13 ~ page {} (총 {} 페이지 영향)",
+            last_diff_page + 1, last_diff_page + 1 - 12);
+
+        // 저장 후 재로드와 비교
+        eprintln!("\n=== 저장 후 재로드 비교 ===");
+        let exported = doc.export_hwp_native().unwrap();
+        let mut doc2 = HwpDocument::from_bytes(&exported).unwrap();
+        doc2.convert_to_editable_native().unwrap();
+        doc2.paginate();
+
+        let pages_reload = doc2.pagination[0].pages.len();
+        eprintln!("재로드 pages: {}", pages_reload);
+
+        let mut diff_count = 0;
+        for pidx in 0..doc.pagination[0].pages.len().max(doc2.pagination[0].pages.len()) {
+            let items1 = doc.pagination[0].pages.get(pidx).map(|p| &p.column_contents[0].items);
+            let items2 = doc2.pagination[0].pages.get(pidx).map(|p| &p.column_contents[0].items);
+
+            let pi1_first = items1.and_then(|i| i.first()).map(|it| match it {
+                PageItem::FullParagraph { para_index } |
+                PageItem::Table { para_index, .. } |
+                PageItem::PartialParagraph { para_index, .. } |
+                PageItem::PartialTable { para_index, .. } |
+                PageItem::Shape { para_index, .. } => *para_index,
+            });
+            let pi2_first = items2.and_then(|i| i.first()).map(|it| match it {
+                PageItem::FullParagraph { para_index } |
+                PageItem::Table { para_index, .. } |
+                PageItem::PartialParagraph { para_index, .. } |
+                PageItem::PartialTable { para_index, .. } |
+                PageItem::Shape { para_index, .. } => *para_index,
+            });
+            let count1 = items1.map(|i| i.len()).unwrap_or(0);
+            let count2 = items2.map(|i| i.len()).unwrap_or(0);
+
+            if pi1_first != pi2_first || count1 != count2 {
+                diff_count += 1;
+                eprintln!("  page {:2}: 편집={:?}({}items) vs 재로드={:?}({}items)",
+                    pidx + 1, pi1_first, count1, pi2_first, count2);
+            }
+        }
+        if diff_count == 0 {
+            eprintln!("  차이 없음 — 편집 결과와 재로드 결과 일치");
+        } else {
+            eprintln!("  {} 페이지에서 차이 발견", diff_count);
+        }
+    }
+
     /// 12페이지 각 문단에서 엔터 후 13페이지 표 배치 검증
     #[test]
     fn test_page12_enter_table_placement_scan() {
