@@ -913,9 +913,14 @@ impl LayoutEngine {
                         } else { 0.0 }
                     } else { 0.0 };
                     let effective_used = total_text_width - trailing_width;
-                    // 양쪽 정렬: 음수 spacing 허용 (원본 HWP 줄바꿈이 우리 메트릭보다
-                    // 넓을 때 단어 간격을 압축하여 양쪽 가지런하게 맞춤)
-                    ((available_width - effective_used) / interior_spaces as f64, 0.0)
+                    // 양쪽 정렬: 단어 간격 분배
+                    // 메트릭 차이로 text_w > avail이면 음수가 되지만,
+                    // 공백 최소 폭을 보장하여 글자 겹침 방지
+                    let raw_ews = (available_width - effective_used) / interior_spaces as f64;
+                    let space_base_w = estimate_text_width(" ", &resolved_to_text_style(
+                        styles, comp_line.runs[0].char_style_id, comp_line.runs[0].lang_index));
+                    let min_ews = -(space_base_w * 0.5); // 공백 폭의 50%까지만 축소 허용
+                    (raw_ews.max(min_ews), 0.0)
                 } else if total_char_count > 1 {
                     // 양쪽 정렬이지만 공백 없음 (일본어 등):
                     // 단어 간격 대신 글자 간격으로 양쪽 맞춤

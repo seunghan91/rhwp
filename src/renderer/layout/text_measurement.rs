@@ -181,7 +181,7 @@ impl TextMeasurer for EmbeddedTextMeasurer {
             }
             let base_w = if let Some(w) = measure_char_width_embedded(&style.font_family, style.bold, style.italic, c, font_size) {
                 w
-            } else if cluster_len[i] > 1 || is_cjk_char(c) { font_size } else { font_size * 0.5 };
+            } else if cluster_len[i] > 1 || is_cjk_char(c) || is_fullwidth_symbol(c) { font_size } else { font_size * 0.5 };
             let mut w = base_w * ratio + style.letter_spacing + style.extra_char_spacing;
             if c == ' ' { w += style.extra_word_spacing; }
             w
@@ -244,7 +244,7 @@ impl TextMeasurer for EmbeddedTextMeasurer {
             }
             let base_w = if let Some(w) = measure_char_width_embedded(&style.font_family, style.bold, style.italic, c, font_size) {
                 w
-            } else if cluster_len[i] > 1 || is_cjk_char(c) { font_size } else { font_size * 0.5 };
+            } else if cluster_len[i] > 1 || is_cjk_char(c) || is_fullwidth_symbol(c) { font_size } else { font_size * 0.5 };
             let mut w = base_w * ratio + style.letter_spacing + style.extra_char_spacing;
             if c == ' ' { w += style.extra_word_spacing; }
             w
@@ -676,22 +676,32 @@ fn measure_char_width_embedded(font_family: &str, bold: bool, italic: bool, c: c
     // CSS font-family 체인에서 첫 번째 폰트명으로 메트릭 조회
     let primary_name = font_family.split(',').next().unwrap_or(font_family).trim();
     let mm = font_metrics_data::find_metric(primary_name, bold, italic)?;
-    // HWP 반각 처리: space 문자는 폰트 글리프 폭이 아닌 em/2(반각)로 고정
+    // HWP 반각 처리: space 및 한컴이 반각으로 처리하는 구두점/기호
     let w = if c == ' ' {
         mm.metric.em_size / 2
     } else {
-        mm.metric.get_width(c)?
+        let glyph_w = mm.metric.get_width(c)?;
+        // 한컴은 스마트 따옴표, 가운뎃점 등을 반각으로 처리
+        // 폰트 메트릭에서 전각(em_size)으로 기록되어 있어도 em/2로 강제
+        let is_halfwidth_punct = matches!(c,
+            '\u{2018}'..='\u{2027}' | // ''‚‛""„‟†‡•‣․‥…‧ 구두점/기호
+            '\u{00B7}'                 // · MIDDLE DOT
+        );
+        if is_halfwidth_punct && glyph_w >= mm.metric.em_size {
+            mm.metric.em_size / 2
+        } else {
+            glyph_w
+        }
     };
     // em 단위 → px: w / em_size * font_size, 그 후 HWP 양자화
     let em = mm.metric.em_size as f64;
     let mut actual_px = w as f64 * font_size / em;
 
-    // Bold 폴백 보정: Regular 메트릭으로 폴백된 경우
-    // Faux Bold(합성 Bold)는 획 두께 증가로 글리프가 넓어진다.
-    // 한컴 webhwp 방식: += (em_size + 10) / 20 (em 단위)
-    if mm.bold_fallback {
-        actual_px += (em + 10.0) / 20.0 * font_size / em;
-    }
+    // Bold 폴백: Regular 메트릭으로 폴백된 경우
+    // 한컴은 faux bold(합성 Bold) 시 렌더링만 획을 두껍게 하고,
+    // 텍스트 메트릭(폭 계산)에는 Regular 폭을 그대로 사용한다.
+    // bold_fallback 보정을 적용하면 Justify 정렬에서 공백이 축소됨.
+    // (26글자 × 1.02px/글자 = 26.5px 과대 → 공백 소멸)
 
     // 한컴과 동일한 HWPUNIT 정수 변환: w * base_size / em (내림)
     // round가 아닌 truncate (as i32)로 처리하여 한컴 정수 나눗셈과 일치
@@ -729,7 +739,7 @@ pub(crate) fn estimate_text_width_unrounded(text: &str, style: &TextStyle) -> f6
         }
         let base_w = if let Some(w) = measure_char_width_embedded(&style.font_family, style.bold, style.italic, c, font_size) {
             w
-        } else if cluster_len[i] > 1 || is_cjk_char(c) { font_size } else { font_size * 0.5 };
+        } else if cluster_len[i] > 1 || is_cjk_char(c) || is_fullwidth_symbol(c) { font_size } else { font_size * 0.5 };
         let mut w = base_w * ratio + style.letter_spacing + style.extra_char_spacing;
         if c == ' ' { w += style.extra_word_spacing; }
         w
@@ -772,6 +782,16 @@ pub(crate) fn is_cjk_char(c: char) -> bool {
     || ('\u{F900}'..='\u{FAFF}').contains(&c) // CJK Compatibility
     || ('\u{3040}'..='\u{30FF}').contains(&c) // 히라가나/카타카나
     || ('\u{FF00}'..='\u{FFEF}').contains(&c) // 전각 문자
+}
+
+/// 한컴이 전각으로 처리하는 기호 (메트릭 폴백 시 font_size 사용)
+fn is_fullwidth_symbol(c: char) -> bool {
+    matches!(c,
+        '\u{20A9}' |                   // ₩ WON SIGN
+        '\u{20AC}' |                   // € EURO SIGN
+        '\u{00A3}' |                   // £ POUND SIGN
+        '\u{00A5}'                     // ¥ YEN SIGN
+    )
 }
 
 /// 한글 자모 초성 여부 (옛한글 포함)

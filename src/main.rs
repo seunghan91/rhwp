@@ -906,6 +906,27 @@ fn dump_controls(args: &[String]) {
                 sec_idx, para_idx, para.char_count, para.text.chars().count(),
                 para.controls.len(), break_info);
             println!("  텍스트: {}", text_preview);
+            // char_shapes 출력
+            if !para.char_shapes.is_empty() {
+                let text_chars: Vec<char> = para.text.chars().collect();
+                for (ci, cs) in para.char_shapes.iter().enumerate() {
+                    let next_pos = para.char_shapes.get(ci + 1).map(|n| n.start_pos).unwrap_or(u32::MAX);
+                    let char_at = text_chars.iter().enumerate()
+                        .find(|(i, _)| {
+                            if *i < para.char_offsets.len() { para.char_offsets[*i] >= cs.start_pos && para.char_offsets[*i] < next_pos }
+                            else { false }
+                        })
+                        .map(|(_, c)| *c);
+                    if let Some(chs) = document.doc_info.char_shapes.get(cs.char_shape_id as usize) {
+                        let bold = (chs.attr & 0x02) != 0;
+                        let spacing = chs.spacings[0]; // 한국어 자간
+                        let ratio = chs.ratios[0]; // 한국어 장평
+                        println!("  [CS] pos={} id={} bold={} spacing={}% ratio={}% char={:?}",
+                            cs.start_pos, cs.char_shape_id, bold, spacing, ratio,
+                            char_at.map(|c| c.to_string()).unwrap_or_default());
+                    }
+                }
+            }
             if let Some(ps) = document.doc_info.para_shapes.get(para.para_shape_id as usize) {
                 // 문단 모양 기본 정보 (항상 출력)
                 println!("  [PS] ps_id={} align={:?} spacing: before={} after={} line={}/{:?}",

@@ -1226,7 +1226,19 @@ impl Renderer for WebCanvasRenderer {
                 if cluster_str.starts_with(|c: char| c < '\u{0020}' && !matches!(c, '\t' | '\n' | '\r')) { continue; }
                 let char_x = x + char_positions[*char_idx];
 
-                if has_ratio {
+                // 반각 강제 구두점: 폰트 글리프가 전각이지만 반각 공간에 배치
+                let ch = cluster_str.chars().next().unwrap_or(' ');
+                let needs_halfwidth_scale = matches!(ch,
+                    '\u{2018}'..='\u{2027}' | '\u{00B7}'
+                ) && !has_ratio;
+
+                if needs_halfwidth_scale {
+                    self.ctx.save();
+                    self.ctx.translate(char_x, y).unwrap_or(());
+                    self.ctx.scale(0.5, 1.0).unwrap_or(());
+                    let _ = self.ctx.fill_text(cluster_str, 0.0, 0.0);
+                    self.ctx.restore();
+                } else if has_ratio {
                     self.ctx.save();
                     self.ctx.translate(char_x, y).unwrap_or(());
                     self.ctx.scale(ratio, 1.0).unwrap_or(());
