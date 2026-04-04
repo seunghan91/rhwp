@@ -224,11 +224,59 @@ mydocs/                        # Development documentation (Korean + English)
 mydocs/eng/                    # English translations (724 files)
 ```
 
-## Development
+## Built with AI Pair Programming
 
-This project is developed using **Claude Code** (Anthropic AI coding agent) as a pair programming partner.
+This project is developed using **[Claude Code](https://claude.ai/code)** (Anthropic's AI coding CLI) as a pair programming partner. The entire development process is transparently documented — not just the code, but the *thinking process* behind it.
 
-The entire development process — daily task logs, implementation plans, code review feedback, technical research, troubleshooting records — is documented in `mydocs/` (Korean) and `mydocs/eng/` (English). It serves as a real-world case study of AI pair programming at scale.
+### How It Works
+
+A human **task director** and an AI **pair programmer** collaborate through a structured workflow:
+
+```
+Task Director (Human)              AI Pair Programmer (Claude Code)
+─────────────────────              ────────────────────────────────
+Sets direction & priorities   →    Analyzes, plans, implements
+Reviews & approves plans      ←    Writes implementation plans
+Provides domain feedback      →    Debugs, tests, iterates
+Makes architectural decisions →    Executes with precision
+Judges quality & correctness  ←    Generates code, docs, tests
+```
+
+### The Process
+
+Every task follows a disciplined cycle:
+
+1. **Task registration** — GitHub Issue with clear scope
+2. **Implementation plan** — AI writes, human reviews and approves
+3. **Step-by-step execution** — Build → Test → Report at each stage
+4. **Code review feedback** — Human provides corrections, AI adapts
+5. **Completion report** — Results documented for future reference
+
+### What's in `mydocs/`
+
+The `mydocs/` directory (724 files, English translations in `mydocs/eng/`) contains the complete development record:
+
+| Directory | Contents | What You'll Learn |
+|-----------|----------|-------------------|
+| `orders/` | Daily task logs | How to structure daily AI collaboration |
+| `plans/` | Task plans & implementation specs | How to break complex problems for AI |
+| `working/` | Step-by-step completion reports | How AI executes and reports progress |
+| `feedback/` | Code review feedback | How to guide AI with corrections |
+| `tech/` | Technical research docs | How AI analyzes and reverse-engineers |
+| `manual/` | Guides (incl. [AI Pair Programming Guide](mydocs/eng/manual/ai_pair_programming_guide.md)) | Best practices distilled |
+| `troubleshootings/` | Debugging records | How AI diagnoses and fixes bugs |
+
+### Why This Matters
+
+Most AI coding demos show simple tasks. This project demonstrates AI pair programming **at production scale**:
+
+- **100K+ lines of Rust** — parser, renderer, pagination, editor
+- **783+ tests** with zero clippy warnings
+- **Reverse engineering** a proprietary binary format
+- **Sub-pixel layout accuracy** matching commercial software
+- **Full CI/CD pipeline** — from commit to npm publish to GitHub Pages
+
+The `mydocs/` directory is not documentation about the code — it's documentation about **how to build software with AI**. It's an open-source methodology.
 
 ## Architecture
 
