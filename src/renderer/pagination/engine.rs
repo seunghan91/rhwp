@@ -1061,10 +1061,24 @@ impl Paginator {
             effective_height + host_spacing
         };
 
+        // 비-TAC 자리차지 표: vert offset이 있으면 실제 배치 위치로 피트 판단
+        // 같은 문단의 여러 표가 각각 독립적인 vert offset을 가진 경우,
+        // current_height + vert_offset + 표높이가 페이지를 넘으면 다음 페이지로
+        let effective_table_height = if !is_tac_table
+            && matches!(table_text_wrap, crate::model::shape::TextWrap::TopAndBottom)
+            && matches!(table.common.vert_rel_to, crate::model::shape::VertRelTo::Para)
+            && table.common.vertical_offset > 0
+        {
+            let v_off = crate::renderer::hwpunit_to_px(table.common.vertical_offset as i32, self.dpi);
+            effective_height + host_spacing + v_off
+        } else {
+            table_total_height
+        };
+
         // 페이지 하단/중앙 고정 표: 본문 높이에 영향 없음
         // 표가 현재 페이지에 전체 들어가는지 확인
         // 텍스트 문단과 동일한 0.5px 부동소수점 톨러런스 적용
-        if st.current_height + table_total_height <= table_available_height + 0.5 {
+        if st.current_height + effective_table_height <= table_available_height + 0.5 {
             self.place_table_fits(st, para_idx, ctrl_idx, para, measured, table,
                 table_total_height, para_height, para_height_for_fit, is_tac_table);
         } else if is_tac_table {

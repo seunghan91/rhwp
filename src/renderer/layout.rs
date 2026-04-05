@@ -1791,12 +1791,14 @@ impl LayoutEngine {
             prev_tac_seg_applied, wrap_around_paras, ..
         } = ctx;
         // 표 앵커 문단의 y 위치 등록
-        // 같은 문단에 TAC(ci=0) 뒤 비-TAC(ci=1)가 올 때:
-        // 비-TAC 표는 TAC 배치 후의 y_offset을 기준으로 배치되어야 함
+        // TAC 표: 이전 TAC가 y_offset을 진행시킨 경우 갱신 (같은 문단 TAC+블록 구조)
+        // 비-TAC 표: 문단 시작 y를 유지 (각 표가 독립적으로 vert offset 기준 배치)
+        let is_current_tac = paragraphs.get(para_index)
+            .and_then(|p| p.controls.get(control_index))
+            .map(|c| matches!(c, Control::Table(t) if t.common.treat_as_char))
+            .unwrap_or(false);
         if let Some(existing_y) = para_start_y.get(&para_index) {
-            // 이미 등록된 y보다 현재 y_offset이 크면 갱신
-            // (이전 TAC 표가 y_offset을 진행시킨 경우)
-            if y_offset > *existing_y + 1.0 {
+            if is_current_tac && y_offset > *existing_y + 1.0 {
                 para_start_y.insert(para_index, y_offset);
             }
         } else {
