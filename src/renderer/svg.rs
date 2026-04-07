@@ -11,6 +11,20 @@ use super::layout::{compute_char_positions, split_into_clusters};
 use crate::model::style::{ImageFillMode, UnderlineType};
 use base64::Engine;
 
+/// SVG 폰트 임베딩 모드
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub enum FontEmbedMode {
+    /// 폰트 임베딩 없음 (CSS font-family 체인만)
+    #[default]
+    None,
+    /// @font-face + local() 참조만 (데이터 미포함)
+    Style,
+    /// 사용 글자만 서브셋 추출 + base64 임베딩
+    Subset,
+    /// 전체 폰트 base64 임베딩
+    Full,
+}
+
 /// SVG 렌더러
 pub struct SvgRenderer {
     /// SVG 출력 버퍼
@@ -41,6 +55,12 @@ pub struct SvgRenderer {
     overlay_skip_depth: u32,
     /// 생성된 화살표 마커 ID 집합 (중복 방지)
     arrow_marker_ids: std::collections::HashSet<String>,
+    /// 폰트 임베딩 모드
+    pub font_embed_mode: FontEmbedMode,
+    /// 추가 폰트 탐색 경로
+    pub font_paths: Vec<std::path::PathBuf>,
+    /// 사용된 폰트별 codepoint 수집 (font_family → codepoints)
+    font_codepoints: std::collections::HashMap<String, std::collections::HashSet<char>>,
 }
 
 /// 디버그 오버레이용 문단 경계 정보
@@ -82,12 +102,20 @@ impl SvgRenderer {
             overlay_table_bounds: Vec::new(),
             overlay_skip_depth: 0,
             arrow_marker_ids: std::collections::HashSet::new(),
+            font_embed_mode: FontEmbedMode::None,
+            font_paths: Vec::new(),
+            font_codepoints: std::collections::HashMap::new(),
         }
     }
 
     /// 생성된 SVG 문자열 반환
     pub fn output(&self) -> &str {
         &self.output
+    }
+
+    /// 수집된 폰트별 사용 글자 목록 반환
+    pub fn font_codepoints(&self) -> &std::collections::HashMap<String, std::collections::HashSet<char>> {
+        &self.font_codepoints
     }
 
     /// 렌더 트리를 SVG로 렌더링
@@ -140,6 +168,17 @@ impl SvgRenderer {
                 }
             }
             RenderNodeType::TextRun(run) => {
+                // 폰트 임베딩: 사용된 폰트/글자 수집
+                if self.font_embed_mode != FontEmbedMode::None && !run.style.font_family.is_empty() {
+                    let codepoints = self.font_codepoints
+                        .entry(run.style.font_family.clone())
+                        .or_default();
+                    for ch in run.text.chars() {
+                        if !ch.is_control() {
+                            codepoints.insert(ch);
+                        }
+                    }
+                }
                 if let Some(ref overlap) = run.char_overlap {
                     // 글자겹침(CharOverlap) 렌더링: 각 문자에 테두리 도형 + 텍스트
                     self.draw_char_overlap(
@@ -1985,6 +2024,226 @@ fn parse_image_dimensions(data: &[u8]) -> Option<(u32, u32)> {
     }
 
     None
+}
+
+/// 폰트명 → local() 별칭 매핑 (한글명 + 영문명)
+fn font_local_aliases(font_family: &str) -> Vec<&'static str> {
+    match font_family {
+        "함초롬바탕" => vec!["함초롬바탕", "HCR Batang"],
+        "함초롬돋움" => vec!["함초롬돋움", "HCR Dotum"],
+        "함초롱바탕" => vec!["함초롱바탕", "HCR Batang"],
+        "함초롱돋움" => vec!["함초롱돋움", "HCR Dotum"],
+        "한컴바탕" => vec!["한컴바탕", "함초롬바탕", "HCR Batang"],
+        "한컴돋움" => vec!["한컴돋움", "함초롬돋움", "HCR Dotum"],
+        "맑은 고딕" => vec!["맑은 고딕", "Malgun Gothic"],
+        "바탕" => vec!["바탕", "Batang"],
+        "돋움" => vec!["돋움", "Dotum"],
+        "굴림" => vec!["굴림", "Gulim"],
+        "굴림체" => vec!["굴림체", "GulimChe"],
+        "바탕체" => vec!["바탕체", "BatangChe"],
+        "궁서" => vec!["궁서", "Gungsuh"],
+        "궁서체" => vec!["궁서체", "GungsuhChe"],
+        _ => vec![],
+    }
+}
+
+/// 폰트명 → 알려진 파일명 매핑 (HWP/한컴/MS 폰트)
+fn known_font_filenames(font_name: &str) -> Vec<&'static str> {
+    match font_name {
+        "함초롬바탕" | "함초롱바탕" | "한컴바탕" => vec!["hamchob-r.ttf", "HBATANG.TTF"],
+        "함초롬돋움" | "함초롱돋움" | "한컴돋움" => vec!["hamchod-r.ttf", "HDOTUM.TTF"],
+        "HY헤드라인M" | "HYHeadLine M" => vec!["H2HDRM.TTF"],
+        "HY견고딕" | "HYGothic-Extra" => vec!["HYGTRE.TTF"],
+        "HY그래픽" | "HYGraphic-Medium" => vec!["HYGPRM.TTF"],
+        "HY견명조" | "HYMyeongJo-Extra" => vec!["HYMJRE.TTF"],
+        "HY신명조" => vec!["HYSNMJ.TTF", "hamchob-r.ttf"],
+        "맑은 고딕" | "Malgun Gothic" => vec!["malgun.ttf", "MalgunGothic.ttf"],
+        "바탕" | "Batang" => vec!["batang.ttc", "BATANG.TTC", "hamchob-r.ttf"],
+        "돋움" | "Dotum" => vec!["dotum.ttc", "DOTUM.TTC", "hamchod-r.ttf"],
+        "굴림" | "Gulim" => vec!["gulim.ttc", "GULIM.TTC", "hamchod-r.ttf"],
+        "궁서" | "Gungsuh" => vec!["gungsuh.ttc", "GUNGSUH.TTC", "hamchob-r.ttf"],
+        "굴림체" | "GulimChe" => vec!["gulim.ttc", "hamchod-r.ttf"],
+        "바탕체" | "BatangChe" => vec!["batang.ttc", "hamchob-r.ttf"],
+        "휴먼명조" => vec!["HYMJRE.TTF", "hamchob-r.ttf"],
+        "새바탕" | "새돋움" | "새굴림" | "새궁서" => vec!["hamchob-r.ttf", "hamchod-r.ttf"],
+        _ => vec![],
+    }
+}
+
+/// 폰트명으로 TTF/OTF 파일을 탐색한다.
+#[cfg(not(target_arch = "wasm32"))]
+fn find_font_file(font_name: &str, extra_paths: &[std::path::PathBuf]) -> Option<std::path::PathBuf> {
+    use std::path::Path;
+
+    // 폰트명 → 파일명 후보 생성
+    let candidates: Vec<String> = {
+        let mut files: Vec<String> = known_font_filenames(font_name).iter().map(|s| s.to_string()).collect();
+        let aliases = font_local_aliases(font_name);
+        let mut names = vec![font_name.to_string()];
+        for a in &aliases {
+            names.push(a.to_string());
+        }
+        for name in &names {
+            let clean = name.replace(' ', "");
+            files.push(format!("{}.ttf", name));
+            files.push(format!("{}.otf", name));
+            files.push(format!("{}.ttc", name));
+            files.push(format!("{}.TTF", name));
+            if clean != *name {
+                files.push(format!("{}.ttf", clean));
+                files.push(format!("{}.otf", clean));
+                files.push(format!("{}.ttc", clean));
+            }
+        }
+        files
+    };
+
+    // 탐색 경로 (우선순위 순)
+    let mut search_dirs: Vec<std::path::PathBuf> = extra_paths.to_vec();
+    for dir in &["ttfs/hwp", "ttfs/windows", "ttfs"] {
+        search_dirs.push(Path::new(dir).to_path_buf());
+    }
+    // 시스템 폰트 경로
+    #[cfg(target_os = "macos")]
+    {
+        search_dirs.push(Path::new("/Library/Fonts").to_path_buf());
+        search_dirs.push(Path::new("/System/Library/Fonts").to_path_buf());
+        search_dirs.push(Path::new("/System/Library/Fonts/Supplemental").to_path_buf());
+    }
+    #[cfg(target_os = "linux")]
+    {
+        search_dirs.push(Path::new("/usr/share/fonts").to_path_buf());
+        search_dirs.push(Path::new("/usr/local/share/fonts").to_path_buf());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        search_dirs.push(Path::new("C:\\Windows\\Fonts").to_path_buf());
+    }
+    // WSL Windows 폰트
+    if Path::new("/mnt/c/Windows/Fonts").exists() {
+        search_dirs.push(Path::new("/mnt/c/Windows/Fonts").to_path_buf());
+    }
+
+    for dir in &search_dirs {
+        if !dir.exists() { continue; }
+        for candidate in &candidates {
+            let path = dir.join(candidate);
+            if path.exists() {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+/// SvgRenderer의 수집된 폰트 정보를 기반으로 @font-face CSS를 생성한다.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn generate_font_style(
+    renderer: &SvgRenderer,
+    font_paths: &[std::path::PathBuf],
+) -> String {
+    let codepoints = renderer.font_codepoints();
+    if codepoints.is_empty() {
+        return String::new();
+    }
+
+    let mut css = String::new();
+
+    match renderer.font_embed_mode {
+        FontEmbedMode::Style => {
+            for font_name in codepoints.keys() {
+                let aliases = font_local_aliases(font_name);
+                let src = if aliases.is_empty() {
+                    format!("local(\"{}\")", font_name)
+                } else {
+                    aliases.iter()
+                        .map(|a| format!("local(\"{}\")", a))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                css.push_str(&format!(
+                    "@font-face {{ font-family: \"{}\"; src: {}; }}\n",
+                    font_name, src,
+                ));
+            }
+        }
+        FontEmbedMode::Subset => {
+            for (font_name, chars) in codepoints.iter() {
+                if let Some(font_path) = find_font_file(font_name, font_paths) {
+                    if let Ok(font_data) = std::fs::read(&font_path) {
+                        // codepoint → glyph ID 변환 (ttf-parser cmap 사용)
+                        let mut remapper = subsetter::GlyphRemapper::new();
+                        if let Ok(face) = ttf_parser::Face::parse(&font_data, 0) {
+                            // glyph 0 (.notdef) 항상 포함
+                            remapper.remap(0);
+                            for ch in chars {
+                                if let Some(gid) = face.glyph_index(*ch) {
+                                    remapper.remap(gid.0);
+                                }
+                            }
+                        }
+                        // 서브셋 추출
+                        match subsetter::subset(&font_data, 0, &remapper) {
+                            Ok(subset_data) => {
+                                let b64 = base64::engine::general_purpose::STANDARD.encode(&subset_data);
+                                css.push_str(&format!(
+                                    "@font-face {{ font-family: \"{}\"; src: url(\"data:font/opentype;base64,{}\") format(\"opentype\"); }}\n",
+                                    font_name, b64,
+                                ));
+                                eprintln!("  [font-embed] {} → 서브셋 {:.1}KB ({}글자, 원본 {:.1}KB)",
+                                    font_name, subset_data.len() as f64 / 1024.0,
+                                    chars.len(), font_data.len() as f64 / 1024.0);
+                                continue;
+                            }
+                            Err(e) => {
+                                eprintln!("  [font-embed] {} 서브셋 실패: {} → local() 폴백", font_name, e);
+                            }
+                        }
+                    }
+                }
+                // 폰트 파일 없거나 서브셋 실패 → local() 폴백
+                let aliases = font_local_aliases(font_name);
+                let src = if aliases.is_empty() {
+                    format!("local(\"{}\")", font_name)
+                } else {
+                    aliases.iter().map(|a| format!("local(\"{}\")", a)).collect::<Vec<_>>().join(", ")
+                };
+                css.push_str(&format!(
+                    "@font-face {{ font-family: \"{}\"; src: {}; }}\n",
+                    font_name, src,
+                ));
+            }
+        }
+        FontEmbedMode::Full => {
+            for font_name in codepoints.keys() {
+                if let Some(font_path) = find_font_file(font_name, font_paths) {
+                    if let Ok(font_data) = std::fs::read(&font_path) {
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&font_data);
+                        css.push_str(&format!(
+                            "@font-face {{ font-family: \"{}\"; src: url(\"data:font/opentype;base64,{}\") format(\"opentype\"); }}\n",
+                            font_name, b64,
+                        ));
+                        eprintln!("  [font-embed] {} → 전체 {:.1}KB", font_name, font_data.len() as f64 / 1024.0);
+                        continue;
+                    }
+                }
+                // 폰트 파일 없음 → local() 폴백
+                let aliases = font_local_aliases(font_name);
+                let src = if aliases.is_empty() {
+                    format!("local(\"{}\")", font_name)
+                } else {
+                    aliases.iter().map(|a| format!("local(\"{}\")", a)).collect::<Vec<_>>().join(", ")
+                };
+                css.push_str(&format!(
+                    "@font-face {{ font-family: \"{}\"; src: {}; }}\n",
+                    font_name, src,
+                ));
+            }
+        }
+        FontEmbedMode::None => {}
+    }
+
+    css
 }
 
 #[cfg(test)]

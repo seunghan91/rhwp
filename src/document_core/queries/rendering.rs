@@ -22,7 +22,6 @@ use super::super::helpers::color_ref_to_css;
 impl DocumentCore {
     pub fn render_page_svg_native(&self, page_num: u32) -> Result<String, HwpError> {
         let tree = self.build_page_tree(page_num)?;
-        // 레이아웃 자가 검증: eprintln은 record_overflow에서 이미 출력됨
         let _overflows = self.layout_engine.take_overflows();
         let mut renderer = SvgRenderer::new();
         renderer.show_paragraph_marks = self.show_paragraph_marks;
@@ -30,6 +29,41 @@ impl DocumentCore {
         renderer.debug_overlay = self.debug_overlay;
         renderer.render_tree(&tree);
         Ok(renderer.output().to_string())
+    }
+
+    /// SVG 렌더링 (폰트 임베딩 옵션 포함)
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn render_page_svg_with_fonts(
+        &self,
+        page_num: u32,
+        font_embed_mode: crate::renderer::svg::FontEmbedMode,
+        font_paths: &[std::path::PathBuf],
+    ) -> Result<String, HwpError> {
+        let tree = self.build_page_tree(page_num)?;
+        let _overflows = self.layout_engine.take_overflows();
+        let mut renderer = SvgRenderer::new();
+        renderer.show_paragraph_marks = self.show_paragraph_marks;
+        renderer.show_control_codes = self.show_control_codes;
+        renderer.debug_overlay = self.debug_overlay;
+        renderer.font_embed_mode = font_embed_mode;
+        renderer.font_paths = font_paths.to_vec();
+        renderer.render_tree(&tree);
+
+        // 폰트 임베딩 후처리
+        let mut svg = renderer.output().to_string();
+        if font_embed_mode != crate::renderer::svg::FontEmbedMode::None {
+            let style_css = crate::renderer::svg::generate_font_style(
+                &renderer, font_paths,
+            );
+            if !style_css.is_empty() {
+                // <svg ...> 직후에 <style> 삽입
+                if let Some(pos) = svg.find('>') {
+                    let insert = format!("\n<style>\n{}</style>\n", style_css);
+                    svg.insert_str(pos + 1, &insert);
+                }
+            }
+        }
+        Ok(svg)
     }
 
     /// HTML 렌더링 (네이티브 에러 타입)

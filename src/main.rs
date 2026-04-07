@@ -43,6 +43,10 @@ fn print_help() {
     println!("      --show-para-marks       문단부호(↵/↓) 표시");
     println!("      --show-control-codes    조판부호 보이기 (문단부호 + 개체 마커 등)");
     println!("      --debug-overlay         디버그 오버레이 (문단/표 경계 + 인덱스 라벨)");
+    println!("      --font-style            @font-face local() 참조 삽입 (폰트 데이터 미포함)");
+    println!("      --embed-fonts           폰트 서브셋 임베딩 (사용 글자만 base64)");
+    println!("      --embed-fonts=full      폰트 전체 임베딩 (base64)");
+    println!("      --font-path <경로>      폰트 파일 탐색 경로 (여러 번 지정 가능)");
     println!();
     println!("  info <파일.hwp>");
     println!("      HWP 파일 정보 표시");
@@ -80,6 +84,8 @@ fn export_svg(args: &[String]) {
     let mut show_para_marks = false;
     let mut show_control_codes = false;
     let mut debug_overlay = false;
+    let mut font_embed_mode = rhwp::renderer::svg::FontEmbedMode::None;
+    let mut font_paths: Vec<std::path::PathBuf> = Vec::new();
 
     let mut i = 1;
     while i < args.len() {
@@ -119,6 +125,27 @@ fn export_svg(args: &[String]) {
             "--debug-overlay" => {
                 debug_overlay = true;
                 i += 1;
+            }
+            "--font-style" => {
+                font_embed_mode = rhwp::renderer::svg::FontEmbedMode::Style;
+                i += 1;
+            }
+            "--embed-fonts" => {
+                font_embed_mode = rhwp::renderer::svg::FontEmbedMode::Subset;
+                i += 1;
+            }
+            "--embed-fonts=full" => {
+                font_embed_mode = rhwp::renderer::svg::FontEmbedMode::Full;
+                i += 1;
+            }
+            "--font-path" => {
+                if i + 1 < args.len() {
+                    font_paths.push(std::path::PathBuf::from(&args[i + 1]));
+                    i += 2;
+                } else {
+                    eprintln!("오류: --font-path 뒤에 경로가 필요합니다.");
+                    return;
+                }
             }
             _ => {
                 eprintln!("알 수 없는 옵션: {}", args[i]);
@@ -186,7 +213,12 @@ fn export_svg(args: &[String]) {
         .unwrap_or("page");
 
     for page_num in &pages {
-        match doc.render_page_svg(*page_num) {
+        let svg_result = if font_embed_mode != rhwp::renderer::svg::FontEmbedMode::None {
+            doc.render_page_svg_with_fonts(*page_num, font_embed_mode, &font_paths)
+        } else {
+            doc.render_page_svg_native(*page_num)
+        };
+        match svg_result {
             Ok(svg) => {
                 let svg_filename = if page_count == 1 {
                     format!("{}.svg", file_stem)
