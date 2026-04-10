@@ -77,3 +77,7 @@ rhwp-chrome/dist/
 rhwp-safari/dist/
 rhwp-safari/HWP Viewer/
 rhwp-safari/.DS_Store
+
+# Xcode 사용자별 설정
+xcuserdata/
+*.xcuserstate
