@@ -11,14 +11,17 @@ class CGTreeRenderer {
     private var imageCache: [UInt16: CGImage] = [:]
     private weak var document: RhwpDocument?
 
+    private var pageHeight: Double = 0
+
     func render(tree: RenderNode, in context: CGContext, pageHeight: Double, document: RhwpDocument?) {
         self.document = document
-        // Y축 변환: CG 좌하단 원점 → 좌상단 원점
-        context.saveGState()
-        context.translateBy(x: 0, y: CGFloat(pageHeight))
-        context.scaleBy(x: 1, y: -1)
+        self.pageHeight = pageHeight
+        // UIView.draw()에서 호출될 때 UIKit이 이미 좌상단 원점 좌표계를 설정한다.
+        // 즉 CGContext의 CTM이 translateBy(y: viewHeight) + scaleBy(y: -1) 상태.
+        // 렌더 트리의 좌표(좌상단 원점)를 그대로 사용할 수 있다.
+        // 단, Core Text와 CGImage는 원본 CG 좌표계(좌하단)를 기대하므로
+        // 해당 요소에서만 국소적으로 좌표를 조정한다.
         renderNode(tree, in: context)
-        context.restoreGState()
     }
 
     func clearCache() {
@@ -213,7 +216,6 @@ class CGTreeRenderer {
                               control1: CGPoint(x: x1, y: y1),
                               control2: CGPoint(x: x2, y: y2))
             case .arcTo(let rx, let ry, let xRot, let largeArc, let sweep, let x, let y):
-                // SVG arc → 근사 (현재 직선으로 연결, M3에서 정확한 변환 구현)
                 path.addLine(to: CGPoint(x: x, y: y))
             case .closePath:
                 path.closeSubpath()
@@ -242,7 +244,8 @@ class CGTreeRenderer {
         applyTransform(img.transform, bbox: bbox, in: ctx)
 
         let r = cgRect(bbox)
-        // CG는 Y축이 반전된 상태에서 이미지도 반전시키므로 다시 뒤집기
+        // CG draw(image:) 는 이미지를 rect에 맞춰 그리지만 상하 반전으로 그린다.
+        // 이미지 영역에서만 Y축 반전하여 올바르게 표시한다.
         ctx.saveGState()
         ctx.translateBy(x: r.minX, y: r.minY + r.height)
         ctx.scaleBy(x: 1, y: -1)
@@ -295,7 +298,18 @@ class CGTreeRenderer {
 
         ctx.saveGState()
 
-        // Y축 재반전 (전체 페이지가 이미 반전 상태)
+        // 음영 (형광펜 배경) — 텍스트 변환 전에 그리기
+        if style.shadeColor != 0x00FFFFFF && style.shadeColor != 0 {
+            let shadeRect = cgRect(bbox)
+            ctx.setFillColor(colorRefToCGColor(style.shadeColor).copy(alpha: 0.3)!)
+            ctx.fill(shadeRect)
+        }
+
+        // 전체 좌표계가 Y반전(좌상단 원점) 상태이지만,
+        // Core Text는 Y축이 위로 증가하는 좌표계를 기대한다.
+        // bbox 영역 내에서만 Y축을 다시 반전하여 Core Text가 올바르게 그리도록 한다.
+        ctx.saveGState()
+        // bbox 영역의 하단으로 이동 → Y반전 → bbox 내부 좌표 (0,0)이 좌하단이 됨
         ctx.translateBy(x: CGFloat(bbox.x), y: CGFloat(bbox.y + bbox.height))
         ctx.scaleBy(x: 1, y: -1)
 
@@ -333,23 +347,20 @@ class CGTreeRenderer {
         let attrStr = NSAttributedString(string: run.text, attributes: attributes)
         let line = CTLineCreateWithAttributedString(attrStr)
 
-        // 베이스라인 위치에 텍스트 배치
+        // Core Text 좌하단 좌표계에서 베이스라인 위치
+        // bbox 내부 좌표: baseline은 bbox.y 상단으로부터의 거리
+        // Core Text Y: bbox 하단(0)으로부터 위로 = bbox.height - baseline
         let textY = CGFloat(bbox.height) - CGFloat(run.baseline)
         ctx.textPosition = CGPoint(x: 0, y: textY)
         CTLineDraw(line, ctx)
 
-        // 음영 (형광펜 배경)
-        if style.shadeColor != 0x00FFFFFF && style.shadeColor != 0 {
-            let shadeRect = CGRect(x: 0, y: 0, width: bbox.width, height: bbox.height)
-            ctx.setFillColor(colorRefToCGColor(style.shadeColor).copy(alpha: 0.3)!)
-            ctx.fill(shadeRect)
-        }
+        ctx.restoreGState()
 
-        // 밑줄
+        // 밑줄 (페이지 좌표계, 전체 Y반전 상태)
         if style.underline != "None" {
-            let lineY = CGFloat(bbox.height) - CGFloat(run.baseline) + fontSize * 0.15
+            let ulY = CGFloat(bbox.y) + CGFloat(run.baseline) + fontSize * 0.15
             drawTextDecoration(
-                in: ctx, y: lineY, width: CGFloat(bbox.width),
+                in: ctx, x: CGFloat(bbox.x), y: ulY, width: CGFloat(bbox.width),
                 shape: style.underlineShape,
                 color: style.underlineColor != 0 ? style.underlineColor : style.color
             )
@@ -357,9 +368,9 @@ class CGTreeRenderer {
 
         // 취소선
         if style.strikethrough {
-            let lineY = CGFloat(bbox.height) / 2
+            let stY = CGFloat(bbox.y) + CGFloat(bbox.height) / 2
             drawTextDecoration(
-                in: ctx, y: lineY, width: CGFloat(bbox.width),
+                in: ctx, x: CGFloat(bbox.x), y: stY, width: CGFloat(bbox.width),
                 shape: style.strikeShape,
                 color: style.strikeColor != 0 ? style.strikeColor : style.color
             )
@@ -392,13 +403,13 @@ class CGTreeRenderer {
     }
 
     /// 밑줄/취소선 그리기
-    private func drawTextDecoration(in ctx: CGContext, y: CGFloat, width: CGFloat,
+    private func drawTextDecoration(in ctx: CGContext, x: CGFloat, y: CGFloat, width: CGFloat,
                                      shape: UInt8, color: UInt32) {
         ctx.saveGState()
         ctx.setStrokeColor(colorRefToCGColor(color))
         ctx.setLineWidth(0.5)
-        ctx.move(to: CGPoint(x: 0, y: y))
-        ctx.addLine(to: CGPoint(x: width, y: y))
+        ctx.move(to: CGPoint(x: x, y: y))
+        ctx.addLine(to: CGPoint(x: x + width, y: y))
         ctx.strokePath()
         ctx.restoreGState()
     }

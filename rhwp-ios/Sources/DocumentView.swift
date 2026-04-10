@@ -1,5 +1,4 @@
 import SwiftUI
-import WebKit
 
 /// 단일 HWP 문서를 렌더링하는 뷰.
 /// 향후 탭 확장 시 탭 1개 = DocumentView 1개로 대응.
@@ -35,9 +34,20 @@ struct DocumentView: View {
                 Spacer()
                 ProgressView("로딩 중...")
                 Spacer()
-            } else if !viewModel.svgContent.isEmpty {
-                SVGWebView(svgContent: viewModel.svgContent)
-                    .edgesIgnoringSafeArea(.bottom)
+            } else if viewModel.pageTree != nil {
+                ScrollView {
+                    let size = viewModel.currentPageSize
+                    PageCanvasView(
+                        renderTree: viewModel.pageTree,
+                        pageHeight: size.height,
+                        document: viewModel.document
+                    )
+                    .frame(width: CGFloat(size.width), height: CGFloat(size.height))
+                    .background(Color.white)
+                    .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
+                    .padding(.vertical, 8)
+                }
+                .background(Color(UIColor.systemGroupedBackground))
             } else if let error = viewModel.errorMessage {
                 Spacer()
                 VStack(spacing: 8) {
@@ -57,34 +67,5 @@ struct DocumentView: View {
                 Spacer()
             }
         }
-    }
-}
-
-/// WKWebView로 SVG 렌더링
-struct SVGWebView: UIViewRepresentable {
-    let svgContent: String
-
-    func makeUIView(context: Context) -> WKWebView {
-        let webView = WKWebView()
-        webView.scrollView.minimumZoomScale = 0.5
-        webView.scrollView.maximumZoomScale = 5.0
-        return webView
-    }
-
-    func updateUIView(_ webView: WKWebView, context: Context) {
-        let html = """
-        <!DOCTYPE html>
-        <html>
-        <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
-        <style>
-        body { margin: 0; display: flex; justify-content: center; background: #f5f5f7; }
-        svg { max-width: 100%; height: auto; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-        </style>
-        </head>
-        <body>\(svgContent)</body>
-        </html>
-        """
-        webView.loadHTMLString(html, baseURL: nil)
     }
 }

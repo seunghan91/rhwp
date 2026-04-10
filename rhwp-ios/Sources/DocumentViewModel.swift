@@ -5,7 +5,7 @@ import SwiftUI
 class DocumentViewModel: ObservableObject {
     @Published var document: RhwpDocument?
     @Published var currentPage: Int = 0
-    @Published var svgContent: String = ""
+    @Published var pageTree: RenderNode?
     @Published var errorMessage: String?
     @Published var isLoading: Bool = false
 
@@ -46,17 +46,17 @@ class DocumentViewModel: ObservableObject {
         loadDocument(data: data)
     }
 
-    /// 현재 페이지를 SVG로 렌더링한다.
+    /// 현재 페이지의 렌더 트리를 생성한다.
     func renderCurrentPage() {
         guard let doc = document else {
-            svgContent = ""
+            pageTree = nil
             return
         }
-        if let svg = doc.renderPageSVG(at: currentPage) {
-            svgContent = svg
+        if let tree = doc.renderPageTree(at: currentPage) {
+            pageTree = tree
         } else {
             errorMessage = "페이지 \(currentPage + 1) 렌더링 실패"
-            svgContent = ""
+            pageTree = nil
         }
     }
 }
