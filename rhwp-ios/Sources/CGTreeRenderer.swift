@@ -79,8 +79,7 @@ class CGTreeRenderer {
             renderGroup(node, in: ctx)
 
         case .textRun(let run):
-            // 3b단계에서 Core Text로 구현 예정
-            renderTextRunPlaceholder(run, bbox: node.bbox, in: ctx)
+            renderTextRun(run, bbox: node.bbox, in: ctx)
 
         case .equation(let eq):
             // M3에서 네이티브 수식 렌더링 예정
@@ -91,8 +90,7 @@ class CGTreeRenderer {
             break
 
         case .footnoteMarker(let marker):
-            // 3b단계에서 구현
-            break
+            renderFootnoteMarker(marker, bbox: node.bbox, in: ctx)
 
         default:
             // 구조 노드(header, footer, column 등): 자식만 순회
@@ -286,33 +284,122 @@ class CGTreeRenderer {
         }
     }
 
-    // MARK: - 텍스트 (3b단계 플레이스홀더)
+    // MARK: - 텍스트 (Core Text)
 
-    private func renderTextRunPlaceholder(_ run: TextRunNode, bbox: BBox, in ctx: CGContext) {
-        // 3b단계에서 Core Text로 교체 예정
-        // 플레이스홀더: 기본 폰트로 텍스트 표시
+    private func renderTextRun(_ run: TextRunNode, bbox: BBox, in ctx: CGContext) {
         guard !run.text.isEmpty else { return }
 
-        let fontSize = CGFloat(run.style.fontSize)
+        let style = run.style
+        let fontSize = CGFloat(style.fontSize)
         guard fontSize > 0 else { return }
 
-        let color = colorRefToCGColor(run.style.color)
-
         ctx.saveGState()
-        // 텍스트는 Y축 재반전 필요 (이미 전체 반전 상태)
+
+        // Y축 재반전 (전체 페이지가 이미 반전 상태)
         ctx.translateBy(x: CGFloat(bbox.x), y: CGFloat(bbox.y + bbox.height))
         ctx.scaleBy(x: 1, y: -1)
 
-        let font = CTFontCreateWithName("AppleSDGothicNeo-Regular" as CFString, fontSize, nil)
-        let attributes: [NSAttributedString.Key: Any] = [
+        // 폰트 생성 (폴백 매핑 적용)
+        let iosName = mapHWPFontToIOS(style.fontFamily)
+        var font = CTFontCreateWithName(iosName as CFString, fontSize, nil)
+
+        // Bold/Italic traits
+        var traits = CTFontSymbolicTraits()
+        if style.bold { traits.insert(.boldTrait) }
+        if style.italic { traits.insert(.italicTrait) }
+        if !traits.isEmpty {
+            if let traitFont = CTFontCreateCopyWithSymbolicTraits(font, fontSize, nil, traits, [.boldTrait, .italicTrait]) {
+                font = traitFont
+            }
+        }
+
+        // 장평(ratio) 적용: 가로 스케일링
+        if style.ratio != 1.0 && style.ratio > 0 {
+            var matrix = CGAffineTransform(scaleX: CGFloat(style.ratio), y: 1.0)
+            font = CTFontCreateCopyWithAttributes(font, fontSize, &matrix, nil)
+        }
+
+        // 속성 구성
+        var attributes: [NSAttributedString.Key: Any] = [
             .font: font,
-            .foregroundColor: UIColor(cgColor: color),
+            .foregroundColor: UIColor(cgColor: colorRefToCGColor(style.color)),
         ]
+
+        // 자간 (letter_spacing)
+        if style.letterSpacing != 0 {
+            attributes[.kern] = CGFloat(style.letterSpacing)
+        }
+
         let attrStr = NSAttributedString(string: run.text, attributes: attributes)
         let line = CTLineCreateWithAttributedString(attrStr)
-        ctx.textPosition = CGPoint(x: 0, y: CGFloat(bbox.height) - CGFloat(run.baseline))
+
+        // 베이스라인 위치에 텍스트 배치
+        let textY = CGFloat(bbox.height) - CGFloat(run.baseline)
+        ctx.textPosition = CGPoint(x: 0, y: textY)
         CTLineDraw(line, ctx)
 
+        // 음영 (형광펜 배경)
+        if style.shadeColor != 0x00FFFFFF && style.shadeColor != 0 {
+            let shadeRect = CGRect(x: 0, y: 0, width: bbox.width, height: bbox.height)
+            ctx.setFillColor(colorRefToCGColor(style.shadeColor).copy(alpha: 0.3)!)
+            ctx.fill(shadeRect)
+        }
+
+        // 밑줄
+        if style.underline != "None" {
+            let lineY = CGFloat(bbox.height) - CGFloat(run.baseline) + fontSize * 0.15
+            drawTextDecoration(
+                in: ctx, y: lineY, width: CGFloat(bbox.width),
+                shape: style.underlineShape,
+                color: style.underlineColor != 0 ? style.underlineColor : style.color
+            )
+        }
+
+        // 취소선
+        if style.strikethrough {
+            let lineY = CGFloat(bbox.height) / 2
+            drawTextDecoration(
+                in: ctx, y: lineY, width: CGFloat(bbox.width),
+                shape: style.strikeShape,
+                color: style.strikeColor != 0 ? style.strikeColor : style.color
+            )
+        }
+
+        ctx.restoreGState()
+    }
+
+    /// 각주/미주 마커 (위첨자)
+    private func renderFootnoteMarker(_ marker: FootnoteMarkerNode, bbox: BBox, in ctx: CGContext) {
+        let fontSize = CGFloat(marker.baseFontSize * 0.55) // 위첨자 55%
+        guard fontSize > 0 else { return }
+
+        ctx.saveGState()
+        ctx.translateBy(x: CGFloat(bbox.x), y: CGFloat(bbox.y + bbox.height))
+        ctx.scaleBy(x: 1, y: -1)
+
+        let iosName = mapHWPFontToIOS(marker.fontFamily)
+        let font = CTFontCreateWithName(iosName as CFString, fontSize, nil)
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: UIColor(cgColor: colorRefToCGColor(marker.color)),
+        ]
+        let attrStr = NSAttributedString(string: marker.text, attributes: attributes)
+        let line = CTLineCreateWithAttributedString(attrStr)
+        ctx.textPosition = CGPoint(x: 0, y: CGFloat(bbox.height) * 0.6)
+        CTLineDraw(line, ctx)
+
+        ctx.restoreGState()
+    }
+
+    /// 밑줄/취소선 그리기
+    private func drawTextDecoration(in ctx: CGContext, y: CGFloat, width: CGFloat,
+                                     shape: UInt8, color: UInt32) {
+        ctx.saveGState()
+        ctx.setStrokeColor(colorRefToCGColor(color))
+        ctx.setLineWidth(0.5)
+        ctx.move(to: CGPoint(x: 0, y: y))
+        ctx.addLine(to: CGPoint(x: width, y: y))
+        ctx.strokePath()
         ctx.restoreGState()
     }
 

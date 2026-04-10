@@ -15,12 +15,14 @@
 		8D170811EBEFD2866D523A83 /* RhwpDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20AA63FCFF8477F97B2B6910 /* RhwpDocument.swift */; };
 		BC339AD1E9DD385231838480 /* CGTreeRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E62AC520236EFEAA4A1092B4 /* CGTreeRenderer.swift */; };
 		DE8D5FE5B009F9EEAF305AD5 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17058FF4439FDF1A0D106BBA /* ContentView.swift */; };
+		ED1966431B853335B6615012 /* FontFallback.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30C5544822856BDE8A410D24 /* FontFallback.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		17058FF4439FDF1A0D106BBA /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		188DE8ED3639F4BF4A1D96DF /* PageCanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageCanvasView.swift; sourceTree = "<group>"; };
 		20AA63FCFF8477F97B2B6910 /* RhwpDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RhwpDocument.swift; sourceTree = "<group>"; };
+		30C5544822856BDE8A410D24 /* FontFallback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FontFallback.swift; sourceTree = "<group>"; };
 		4FF54AB9AD6C2D71F75E6D4E /* rhwp-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "rhwp-Bridging-Header.h"; sourceTree = "<group>"; };
 		81865E251AD52D976773B18D /* AlHangeul.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = AlHangeul.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		997135DD4569EB9F95A08783 /* DocumentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentView.swift; sourceTree = "<group>"; };
@@ -57,6 +59,7 @@
 				17058FF4439FDF1A0D106BBA /* ContentView.swift */,
 				997135DD4569EB9F95A08783 /* DocumentView.swift */,
 				9C7F329F4166423A625506DD /* DocumentViewModel.swift */,
+				30C5544822856BDE8A410D24 /* FontFallback.swift */,
 				BA525A506B67F9EA884FCB4A /* Info.plist */,
 				188DE8ED3639F4BF4A1D96DF /* PageCanvasView.swift */,
 				EA55FCB56AC4463FE8821CFE /* RenderTree.swift */,
@@ -130,6 +133,7 @@
 				DE8D5FE5B009F9EEAF305AD5 /* ContentView.swift in Sources */,
 				330E49B5B38009670E2F4B44 /* DocumentView.swift in Sources */,
 				730CE2A5AF99054D86EB9038 /* DocumentViewModel.swift in Sources */,
+				ED1966431B853335B6615012 /* FontFallback.swift in Sources */,
 				7F64A3020F384CCB48BBBB0A /* PageCanvasView.swift in Sources */,
 				0B73A9F28EC1EA3324409480 /* RenderTree.swift in Sources */,
 				8D170811EBEFD2866D523A83 /* RhwpDocument.swift in Sources */,
