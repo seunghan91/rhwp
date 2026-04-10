@@ -1,0 +1,329 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		1517A2CC3B84A86949BA641E /* AlHangeulApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C69CA5A7BB9EDAC1ED2BAB /* AlHangeulApp.swift */; };
+		330E49B5B38009670E2F4B44 /* DocumentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 997135DD4569EB9F95A08783 /* DocumentView.swift */; };
+		730CE2A5AF99054D86EB9038 /* DocumentViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C7F329F4166423A625506DD /* DocumentViewModel.swift */; };
+		8D170811EBEFD2866D523A83 /* RhwpDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20AA63FCFF8477F97B2B6910 /* RhwpDocument.swift */; };
+		DE8D5FE5B009F9EEAF305AD5 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17058FF4439FDF1A0D106BBA /* ContentView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		17058FF4439FDF1A0D106BBA /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		20AA63FCFF8477F97B2B6910 /* RhwpDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RhwpDocument.swift; sourceTree = "<group>"; };
+		4FF54AB9AD6C2D71F75E6D4E /* rhwp-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "rhwp-Bridging-Header.h"; sourceTree = "<group>"; };
+		81865E251AD52D976773B18D /* AlHangeul.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = AlHangeul.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		997135DD4569EB9F95A08783 /* DocumentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentView.swift; sourceTree = "<group>"; };
+		9C7F329F4166423A625506DD /* DocumentViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentViewModel.swift; sourceTree = "<group>"; };
+		A6C69CA5A7BB9EDAC1ED2BAB /* AlHangeulApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlHangeulApp.swift; sourceTree = "<group>"; };
+		BA525A506B67F9EA884FCB4A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		C8A2986666EFCD03085A7319 /* rhwp.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = rhwp.h; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		B80BBC760C44B9077204BF0E /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				81865E251AD52D976773B18D /* AlHangeul.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		CC536CD0D6BD5986071DF335 = {
+			isa = PBXGroup;
+			children = (
+				F3A87CD73C5FF6A801D3A86D /* Sources */,
+				B80BBC760C44B9077204BF0E /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		F3A87CD73C5FF6A801D3A86D /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				A6C69CA5A7BB9EDAC1ED2BAB /* AlHangeulApp.swift */,
+				17058FF4439FDF1A0D106BBA /* ContentView.swift */,
+				997135DD4569EB9F95A08783 /* DocumentView.swift */,
+				9C7F329F4166423A625506DD /* DocumentViewModel.swift */,
+				BA525A506B67F9EA884FCB4A /* Info.plist */,
+				4FF54AB9AD6C2D71F75E6D4E /* rhwp-Bridging-Header.h */,
+				C8A2986666EFCD03085A7319 /* rhwp.h */,
+				20AA63FCFF8477F97B2B6910 /* RhwpDocument.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		5D95FFCC81A27C7524AE135E /* AlHangeul */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EF8B80D87F628FFA77373740 /* Build configuration list for PBXNativeTarget "AlHangeul" */;
+			buildPhases = (
+				D96F17F7D9975E5395AFD1AE /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = AlHangeul;
+			packageProductDependencies = (
+			);
+			productName = AlHangeul;
+			productReference = 81865E251AD52D976773B18D /* AlHangeul.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		32AD7DA1A1F30240A6208AB5 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					5D95FFCC81A27C7524AE135E = {
+						DevelopmentTeam = "";
+					};
+				};
+			};
+			buildConfigurationList = A02D148E0A15DC317F78B21F /* Build configuration list for PBXProject "AlHangeul" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = CC536CD0D6BD5986071DF335;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = B80BBC760C44B9077204BF0E /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				5D95FFCC81A27C7524AE135E /* AlHangeul */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		D96F17F7D9975E5395AFD1AE /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1517A2CC3B84A86949BA641E /* AlHangeulApp.swift in Sources */,
+				DE8D5FE5B009F9EEAF305AD5 /* ContentView.swift in Sources */,
+				330E49B5B38009670E2F4B44 /* DocumentView.swift in Sources */,
+				730CE2A5AF99054D86EB9038 /* DocumentViewModel.swift in Sources */,
+				8D170811EBEFD2866D523A83 /* RhwpDocument.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		268E8540D14E8B6CBB05F596 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		7EA3E14D8EE28C2407F9A95D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = "";
+				INFOPLIST_FILE = Sources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/../target/aarch64-apple-ios-sim/release",
+					"$(PROJECT_DIR)/../target/aarch64-apple-ios/release",
+				);
+				OTHER_LDFLAGS = (
+					"-lrhwp",
+					"-framework Security",
+					"-framework CoreFoundation",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.edwardkim.alhangeul;
+				PRODUCT_NAME = "알한글";
+				SDKROOT = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = "Sources/rhwp-Bridging-Header.h";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A3992D9434FCF89A84E1D32C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = "";
+				INFOPLIST_FILE = Sources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/../target/aarch64-apple-ios-sim/release",
+					"$(PROJECT_DIR)/../target/aarch64-apple-ios/release",
+				);
+				OTHER_LDFLAGS = (
+					"-lrhwp",
+					"-framework Security",
+					"-framework CoreFoundation",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.edwardkim.alhangeul;
+				PRODUCT_NAME = "알한글";
+				SDKROOT = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = "Sources/rhwp-Bridging-Header.h";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		DE9C1DB238EA94934BE88754 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A02D148E0A15DC317F78B21F /* Build configuration list for PBXProject "AlHangeul" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DE9C1DB238EA94934BE88754 /* Debug */,
+				268E8540D14E8B6CBB05F596 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		EF8B80D87F628FFA77373740 /* Build configuration list for PBXNativeTarget "AlHangeul" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7EA3E14D8EE28C2407F9A95D /* Debug */,
+				A3992D9434FCF89A84E1D32C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 32AD7DA1A1F30240A6208AB5 /* Project object */;
+}
