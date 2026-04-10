@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0B73A9F28EC1EA3324409480 /* RenderTree.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA55FCB56AC4463FE8821CFE /* RenderTree.swift */; };
 		1517A2CC3B84A86949BA641E /* AlHangeulApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C69CA5A7BB9EDAC1ED2BAB /* AlHangeulApp.swift */; };
 		330E49B5B38009670E2F4B44 /* DocumentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 997135DD4569EB9F95A08783 /* DocumentView.swift */; };
 		730CE2A5AF99054D86EB9038 /* DocumentViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C7F329F4166423A625506DD /* DocumentViewModel.swift */; };
@@ -24,6 +25,7 @@
 		A6C69CA5A7BB9EDAC1ED2BAB /* AlHangeulApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlHangeulApp.swift; sourceTree = "<group>"; };
 		BA525A506B67F9EA884FCB4A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		C8A2986666EFCD03085A7319 /* rhwp.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = rhwp.h; sourceTree = "<group>"; };
+		EA55FCB56AC4463FE8821CFE /* RenderTree.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RenderTree.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -51,6 +53,7 @@
 				997135DD4569EB9F95A08783 /* DocumentView.swift */,
 				9C7F329F4166423A625506DD /* DocumentViewModel.swift */,
 				BA525A506B67F9EA884FCB4A /* Info.plist */,
+				EA55FCB56AC4463FE8821CFE /* RenderTree.swift */,
 				4FF54AB9AD6C2D71F75E6D4E /* rhwp-Bridging-Header.h */,
 				C8A2986666EFCD03085A7319 /* rhwp.h */,
 				20AA63FCFF8477F97B2B6910 /* RhwpDocument.swift */,
@@ -120,6 +123,7 @@
 				DE8D5FE5B009F9EEAF305AD5 /* ContentView.swift in Sources */,
 				330E49B5B38009670E2F4B44 /* DocumentView.swift in Sources */,
 				730CE2A5AF99054D86EB9038 /* DocumentViewModel.swift in Sources */,
+				0B73A9F28EC1EA3324409480 /* RenderTree.swift in Sources */,
 				8D170811EBEFD2866D523A83 /* RhwpDocument.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
