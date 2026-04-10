@@ -65,4 +65,24 @@ class RhwpDocument {
         rhwp_free_string(svgPtr)
         return svg
     }
+
+    /// 특정 페이지의 렌더 트리를 반환한다.
+    func renderPageTree(at page: Int) -> RenderNode? {
+        guard let jsonPtr = rhwp_render_page_tree(handle, UInt32(page)) else {
+            return nil
+        }
+        let json = String(cString: jsonPtr)
+        rhwp_free_string(jsonPtr)
+        guard let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(RenderNode.self, from: data)
+    }
+
+    /// 이미지 바이너리 데이터를 반환한다 (bin_data_id는 1-indexed).
+    func imageData(binDataId: UInt16) -> Data? {
+        var len: Int = 0
+        guard let ptr = rhwp_image_data(handle, binDataId, &len), len > 0 else {
+            return nil
+        }
+        return Data(bytes: ptr, count: len)
+    }
 }

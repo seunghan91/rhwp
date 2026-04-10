@@ -3,6 +3,8 @@
 //! IR(Document Model)로부터 변환된 렌더링 전용 트리 구조.
 //! 각 노드는 페이지 내 위치와 크기가 계산된 상태를 가진다.
 
+use serde::Serialize;
+
 use crate::model::{ColorRef, Rect};
 use crate::model::style::ImageFillMode;
 use super::{TextStyle, ShapeStyle, LineStyle, PathCommand, GradientFillInfo};
@@ -13,7 +15,7 @@ use super::layout::CellContext;
 pub type NodeId = u32;
 
 /// 렌더 노드 (페이지 내 렌더링 가능한 요소)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderNode {
     /// 노드 ID
     pub id: NodeId,
@@ -142,7 +144,7 @@ fn json_escape(s: &str) -> String {
 }
 
 /// 렌더 노드 종류
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum RenderNodeType {
     /// 페이지 루트 노드
     Page(PageNode),
@@ -194,7 +196,7 @@ pub enum RenderNodeType {
 }
 
 /// 각주/미주 마커 렌더 노드
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct FootnoteMarkerNode {
     /// 각주 번호
     pub number: u16,
@@ -214,7 +216,7 @@ pub struct FootnoteMarkerNode {
 }
 
 /// 양식 개체 렌더 노드
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct FormObjectNode {
     /// 양식 개체 타입
     pub form_type: crate::model::control::FormType,
@@ -241,7 +243,7 @@ pub struct FormObjectNode {
 }
 
 /// 바운딩 박스 (위치 + 크기, 픽셀 단위)
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, Serialize)]
 pub struct BoundingBox {
     /// X 좌표 (페이지 내 절대 위치, px)
     pub x: f64,
@@ -287,7 +289,7 @@ impl BoundingBox {
 }
 
 /// 페이지 노드
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PageNode {
     /// 페이지 번호 (0-based)
     pub page_index: u32,
@@ -300,7 +302,7 @@ pub struct PageNode {
 }
 
 /// 페이지 배경 노드
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PageBackgroundNode {
     /// 배경색
     pub background_color: Option<ColorRef>,
@@ -315,16 +317,17 @@ pub struct PageBackgroundNode {
 }
 
 /// 페이지 배경 이미지 정보
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PageBackgroundImage {
-    /// 이미지 데이터
+    /// 이미지 데이터 (JSON 직렬화 시 제외)
+    #[serde(skip)]
     pub data: Vec<u8>,
     /// 이미지 채우기 모드
     pub fill_mode: super::super::model::style::ImageFillMode,
 }
 
 /// 텍스트 줄 노드
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TextLineNode {
     /// 줄 높이 (px)
     pub line_height: f64,
@@ -349,7 +352,7 @@ impl TextLineNode {
 }
 
 /// 텍스트 런 노드 (동일 글자 모양의 연속 텍스트)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TextRunNode {
     /// 텍스트 내용
     pub text: String,
@@ -386,7 +389,7 @@ pub struct TextRunNode {
 }
 
 /// 누름틀 필드 조판부호 마커 유형
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize)]
 pub enum FieldMarkerType {
     #[default]
     None,
@@ -401,7 +404,7 @@ pub enum FieldMarkerType {
 }
 
 /// 표 노드
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TableNode {
     /// 행 수
     pub row_count: u16,
@@ -418,7 +421,7 @@ pub struct TableNode {
 }
 
 /// 표 셀 노드
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TableCellNode {
     /// 열 위치
     pub col: u16,
@@ -439,7 +442,7 @@ pub struct TableCellNode {
 }
 
 /// 도형 변환 정보 (회전/대칭)
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, Serialize)]
 pub struct ShapeTransform {
     /// 회전각 (도, 시계방향)
     pub rotation: f64,
@@ -457,7 +460,7 @@ impl ShapeTransform {
 }
 
 /// 직선 노드
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct LineNode {
     /// 시작점 (px)
     pub x1: f64,
@@ -486,7 +489,7 @@ impl LineNode {
 }
 
 /// 사각형 노드
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RectangleNode {
     /// 모서리 곡률 (px)
     pub corner_radius: f64,
@@ -515,7 +518,7 @@ impl RectangleNode {
 }
 
 /// 타원 노드
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct EllipseNode {
     /// 도형 스타일
     pub style: ShapeStyle,
@@ -540,7 +543,7 @@ impl EllipseNode {
 }
 
 /// 패스 노드
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PathNode {
     /// 패스 커맨드 목록
     pub commands: Vec<PathCommand>,
@@ -573,11 +576,12 @@ impl PathNode {
 }
 
 /// 이미지 노드
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ImageNode {
     /// BinData ID 참조
     pub bin_data_id: u16,
-    /// 이미지 데이터 (캐시용)
+    /// 이미지 데이터 (캐시용, JSON 직렬화 시 제외)
+    #[serde(skip)]
     pub data: Option<Vec<u8>>,
     /// 소속 구역 인덱스
     pub section_index: Option<usize>,
@@ -611,7 +615,7 @@ impl ImageNode {
 }
 
 /// 묶음 개체 노드
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct GroupNode {
     /// 소속 구역 인덱스
     pub section_index: Option<usize>,
@@ -622,7 +626,7 @@ pub struct GroupNode {
 }
 
 /// 수식 노드 (SVG 인라인 렌더링)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct EquationNode {
     /// 수식 SVG 조각 (viewBox 기준 상대 좌표)
     pub svg_content: String,
@@ -647,7 +651,7 @@ pub struct EquationNode {
 }
 
 /// 한 페이지의 렌더 트리
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PageRenderTree {
     /// 루트 노드
     pub root: RenderNode,

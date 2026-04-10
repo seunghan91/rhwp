@@ -20,6 +20,18 @@ use crate::error::HwpError;
 use super::super::helpers::color_ref_to_css;
 
 impl DocumentCore {
+    /// 렌더 트리를 생성하여 반환한다 (Core Graphics 등 외부 렌더러용).
+    pub fn build_page_render_tree(&self, page_num: u32) -> Result<crate::renderer::render_tree::PageRenderTree, HwpError> {
+        let tree = self.build_page_tree(page_num)?;
+        let _overflows = self.layout_engine.take_overflows();
+        Ok(tree)
+    }
+
+    /// 이미지 바이너리 데이터를 인덱스로 반환한다 (0-indexed).
+    pub fn get_bin_data(&self, index: usize) -> Option<&[u8]> {
+        self.document.bin_data_content.get(index).map(|b| b.data.as_slice())
+    }
+
     pub fn render_page_svg_native(&self, page_num: u32) -> Result<String, HwpError> {
         let tree = self.build_page_tree(page_num)?;
         let _overflows = self.layout_engine.take_overflows();

@@ -1,5 +1,4 @@
 import SwiftUI
-import WebKit
 
 /// 단일 HWP 문서를 렌더링하는 뷰.
 /// 향후 탭 확장 시 탭 1개 = DocumentView 1개로 대응.
@@ -9,47 +8,17 @@ struct DocumentView: View {
     var body: some View {
         VStack(spacing: 0) {
             // 상단 정보 바
-            HStack {
-                Text("알한글")
-                    .font(.headline)
-                    .fontWeight(.bold)
-                Spacer()
-                if viewModel.pageCount > 0 {
-                    let size = viewModel.currentPageSize
-                    Text("\(viewModel.currentPage + 1)/\(viewModel.pageCount)쪽")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    if size.width > 0 {
-                        Text("(\(Int(size.width))×\(Int(size.height))pt)")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(Color(UIColor.systemBackground))
+            headerBar
 
             // 문서 렌더링 영역
             if viewModel.isLoading {
                 Spacer()
                 ProgressView("로딩 중...")
                 Spacer()
-            } else if !viewModel.svgContent.isEmpty {
-                SVGWebView(svgContent: viewModel.svgContent)
-                    .edgesIgnoringSafeArea(.bottom)
+            } else if viewModel.pageCount > 0 {
+                pageScrollView
             } else if let error = viewModel.errorMessage {
-                Spacer()
-                VStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.largeTitle)
-                        .foregroundColor(.orange)
-                    Text(error)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-                .padding()
-                Spacer()
+                errorView(error)
             } else {
                 Spacer()
                 Text("문서를 열어주세요.")
@@ -58,33 +27,76 @@ struct DocumentView: View {
             }
         }
     }
-}
 
-/// WKWebView로 SVG 렌더링
-struct SVGWebView: UIViewRepresentable {
-    let svgContent: String
+    // MARK: - 상단 바
 
-    func makeUIView(context: Context) -> WKWebView {
-        let webView = WKWebView()
-        webView.scrollView.minimumZoomScale = 0.5
-        webView.scrollView.maximumZoomScale = 5.0
-        return webView
+    private var headerBar: some View {
+        HStack {
+            Text("알한글")
+                .font(.headline)
+                .fontWeight(.bold)
+            if !viewModel.filename.isEmpty {
+                Text("— \(viewModel.filename)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            if viewModel.pageCount > 0 {
+                Text("\(viewModel.currentPage + 1)/\(viewModel.pageCount)쪽")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Color(UIColor.systemBackground))
     }
 
-    func updateUIView(_ webView: WKWebView, context: Context) {
-        let html = """
-        <!DOCTYPE html>
-        <html>
-        <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
-        <style>
-        body { margin: 0; display: flex; justify-content: center; background: #f5f5f7; }
-        svg { max-width: 100%; height: auto; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-        </style>
-        </head>
-        <body>\(svgContent)</body>
-        </html>
-        """
-        webView.loadHTMLString(html, baseURL: nil)
+    // MARK: - 다중 페이지 스크롤
+
+    private var pageScrollView: some View {
+        ScrollView {
+            LazyVStack(spacing: 12) {
+                ForEach(0..<viewModel.pageCount, id: \.self) { page in
+                    let size = viewModel.pageSize(at: page)
+                    PageCanvasView(
+                        renderTree: viewModel.pageTrees[page],
+                        pageHeight: size.height,
+                        document: viewModel.document
+                    )
+                    .frame(width: CGFloat(size.width), height: CGFloat(size.height))
+                    .background(Color.white)
+                    .shadow(color: .black.opacity(0.08), radius: 3, x: 0, y: 1)
+                    .onAppear {
+                        viewModel.loadPage(page)
+                        viewModel.currentPage = page
+                    }
+                    .onDisappear {
+                        viewModel.unloadPage(page)
+                    }
+                }
+            }
+            .padding(.vertical, 8)
+        }
+        .background(Color(UIColor.systemGroupedBackground))
+    }
+
+    // MARK: - 에러
+
+    private func errorView(_ error: String) -> some View {
+        VStack {
+            Spacer()
+            VStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.largeTitle)
+                    .foregroundColor(.orange)
+                Text(error)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding()
+            Spacer()
+        }
     }
 }
