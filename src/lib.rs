@@ -12,6 +12,8 @@ pub mod error;
 pub mod document_core;
 pub mod wasm_api;
 pub mod wmf;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod ios_ffi;
 
 pub use parser::{DocumentParser, parse_document};
 pub use serializer::{DocumentSerializer, serialize_document};

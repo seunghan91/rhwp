@@ -1,0 +1,30 @@
+name: AlHangeul
+options:
+  bundleIdPrefix: com.edwardkim
+  deploymentTarget:
+    iOS: "16.0"
+  xcodeVersion: "16.0"
+
+targets:
+  AlHangeul:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    resources:
+      - path: Resources
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.edwardkim.alhangeul
+        PRODUCT_NAME: 알한글
+        INFOPLIST_FILE: Sources/Info.plist
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/rhwp-Bridging-Header.h
+        LIBRARY_SEARCH_PATHS:
+          - "$(PROJECT_DIR)/../target/aarch64-apple-ios-sim/release"
+          - "$(PROJECT_DIR)/../target/aarch64-apple-ios/release"
+        OTHER_LDFLAGS:
+          - "-lrhwp"
+          - "-framework Security"
+          - "-framework CoreFoundation"
+        DEVELOPMENT_TEAM: ""

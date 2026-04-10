@@ -1,0 +1,10 @@
+language = "C"
+header = "// rhwp iOS FFI — 자동 생성 헤더 (cbindgen)"
+include_guard = "RHWP_H"
+autogen_warning = "// 이 파일은 cbindgen으로 자동 생성됩니다. 수동 편집 금지."
+
+[export]
+include = ["RhwpHandle"]
+
+[export.rename]
+"RhwpHandle" = "RhwpHandle"
