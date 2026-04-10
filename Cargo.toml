@@ -7,7 +7,7 @@ license = "MIT"
 repository = "https://github.com/pureink-studio/rhwp"
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib", "rlib", "staticlib"]
 
 [[bin]]
 name = "rhwp"
