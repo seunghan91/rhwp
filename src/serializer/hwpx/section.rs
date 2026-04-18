@@ -235,6 +235,24 @@ pub(crate) fn render_paragraph_runs(
     // 마지막 run 닫기
     emit_run!();
 
+    // HWPX 파서는 \u{0002}를 para.text에서 필터링하므로, ctrl_idx가 소비되지 않은
+    // 인라인 컨트롤(Table/Picture)을 별도 run으로 후출력한다.
+    for ctrl in &controls[ctrl_idx..] {
+        match ctrl {
+            Control::Table(tbl) => {
+                crate::serializer::hwpx::table::write_table(
+                    &mut ctrl_section, tbl, default_tab_width,
+                );
+                emit_run!();
+            }
+            Control::Picture(pic) => {
+                crate::serializer::hwpx::picture::write_picture(&mut ctrl_section, pic);
+                emit_run!();
+            }
+            _ => {}
+        }
+    }
+
     let vert_end = vert_start + (lines_in_para + 1) * VERT_STEP;
     (result, linesegs, vert_end)
 }

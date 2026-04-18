@@ -332,6 +332,56 @@ mod tests {
         }
     }
 
+    // ─── Stage 5/#186: 통합 검증 ───
+
+    #[test]
+    fn ref_table_roundtrip() {
+        let bytes = std::fs::read("samples/hwpx/ref/ref_table.hwpx").expect("ref_table.hwpx");
+        let doc = crate::parser::hwpx::parse_hwpx(&bytes).expect("parse ref_table");
+        let orig_tbl = doc.sections[0].paragraphs.iter()
+            .flat_map(|p| p.controls.iter())
+            .find_map(|c| if let crate::model::control::Control::Table(t) = c { Some(t.as_ref()) } else { None })
+            .expect("no table in ref_table.hwpx");
+
+        let rt_bytes = serialize_hwpx(&doc).expect("serialize");
+        let rt_doc = crate::parser::hwpx::parse_hwpx(&rt_bytes).expect("parse rt");
+        let rt_tbl = rt_doc.sections[0].paragraphs.iter()
+            .flat_map(|p| p.controls.iter())
+            .find_map(|c| if let crate::model::control::Control::Table(t) = c { Some(t.as_ref()) } else { None })
+            .expect("no table in rt");
+        assert_eq!(rt_tbl.row_count, orig_tbl.row_count, "row_count");
+        assert_eq!(rt_tbl.col_count, orig_tbl.col_count, "col_count");
+        assert_eq!(rt_tbl.cells.len(), orig_tbl.cells.len(), "cell count");
+        assert_eq!(rt_tbl.border_fill_id, orig_tbl.border_fill_id, "borderFillIDRef");
+    }
+
+    #[test]
+    fn ref_mixed_roundtrip() {
+        let bytes = std::fs::read("samples/hwpx/ref/ref_mixed.hwpx").expect("ref_mixed.hwpx");
+        let doc = crate::parser::hwpx::parse_hwpx(&bytes).expect("parse ref_mixed");
+        let orig_sec = &doc.sections[0];
+
+        let rt_bytes = serialize_hwpx(&doc).expect("serialize");
+        let rt_doc = crate::parser::hwpx::parse_hwpx(&rt_bytes).expect("parse rt");
+        let rt_sec = &rt_doc.sections[0];
+        assert_eq!(rt_sec.paragraphs.len(), orig_sec.paragraphs.len(), "paragraph count");
+        for (i, (orig, rt)) in orig_sec.paragraphs.iter().zip(rt_sec.paragraphs.iter()).enumerate() {
+            assert_eq!(rt.text, orig.text, "para[{i}] text");
+        }
+    }
+
+    #[test]
+    fn ref_text_roundtrip() {
+        let bytes = std::fs::read("samples/hwpx/ref/ref_text.hwpx").expect("ref_text.hwpx");
+        let doc = crate::parser::hwpx::parse_hwpx(&bytes).expect("parse ref_text");
+        let rt_bytes = serialize_hwpx(&doc).expect("serialize");
+        let rt_doc = crate::parser::hwpx::parse_hwpx(&rt_bytes).expect("parse rt");
+        assert_eq!(rt_doc.sections.len(), doc.sections.len(), "section count");
+        for (i, (orig, rt)) in doc.sections[0].paragraphs.iter().zip(rt_doc.sections[0].paragraphs.iter()).enumerate() {
+            assert_eq!(rt.text, orig.text, "para[{i}] text");
+        }
+    }
+
     // ─── Stage 4/#186: 그림 직렬화 + BinData ───
 
     fn make_picture_doc(bin_data_id: u16, ext: &str, data: Vec<u8>, width: u32, height: u32) -> Document {
