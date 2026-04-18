@@ -99,28 +99,70 @@ pub fn write_section(
 
 /// 문단 하나를 (`<hp:run>…</hp:run>` XML, lineseg XML, 다음 vert_cursor)로 변환.
 ///
-/// `para.char_shapes`가 복수이면 UTF-16 offset 경계에서 run을 분리한다.
-fn render_paragraph_runs(
+/// - `para.char_shapes`가 복수이면 UTF-16 offset 경계에서 run을 분리한다.
+/// - `para.text` 내 `\u{0002}`는 `para.controls`에 연결된 인라인 개체(표 등)
+///   위치를 나타내며, 해당 제어문자 직전까지의 텍스트를 run으로 닫고
+///   개체 XML을 run 내 `<hp:t>` 이전에 삽입한다.
+pub(crate) fn render_paragraph_runs(
     para: &Paragraph,
     vert_start: u32,
     default_tab_width: u32,
 ) -> (String, String, u32) {
+    use crate::model::control::Control;
+
     let text = &para.text;
     let tab_ext = &para.tab_extended;
     let shapes = &para.char_shapes;
+    let controls = &para.controls;
 
-    let mut runs_xml = String::new();
+    let mut result = String::new();
     let mut linesegs = String::new();
     push_lineseg(&mut linesegs, 0, vert_start);
 
     let first_id = shapes.first().map(|s| s.char_shape_id).unwrap_or(0);
     let mut shape_idx: usize = 0;
     let mut current_id = first_id;
-    let mut t_xml = format!(r#"<hp:run charPrIDRef="{current_id}"><hp:t>"#);
-    let mut buf = String::new();
+    let mut ctrl_idx: usize = 0;
+
+    // 현재 run 상태
+    // run = <hp:run charPrIDRef="N"> + ctrl_section + (<hp:t>t_content</hp:t> | <hp:t/>) + </hp:run>
+    let mut ctrl_section = String::new(); // 인라인 개체 (<hp:tbl> 등), <hp:t> 이전에 위치
+    let mut t_content = String::new();    // <hp:t> 내용
+    let mut char_buf = String::new();     // xml_escape 대기 문자
+    let mut has_t_content = false;        // t_content에 실제 내용이 있는지
+
     let mut utf16_pos: u32 = 0;
     let mut lines_in_para: u32 = 0;
     let mut tab_count: usize = 0;
+
+    macro_rules! flush_chars {
+        () => {
+            if !char_buf.is_empty() {
+                t_content.push_str(&xml_escape(&char_buf));
+                char_buf.clear();
+                has_t_content = true;
+            }
+        }
+    }
+
+    macro_rules! emit_run {
+        () => {{
+            flush_chars!();
+            result.push_str(&format!(r#"<hp:run charPrIDRef="{}">"#, current_id));
+            result.push_str(&ctrl_section);
+            if has_t_content {
+                result.push_str("<hp:t>");
+                result.push_str(&t_content);
+                result.push_str("</hp:t>");
+            } else {
+                result.push_str("<hp:t/>");
+            }
+            result.push_str("</hp:run>");
+            ctrl_section.clear();
+            t_content.clear();
+            has_t_content = false;
+        }}
+    }
 
     for c in text.chars() {
         let u16_len = c.len_utf16() as u32;
@@ -129,29 +171,46 @@ fn render_paragraph_runs(
         while shape_idx + 1 < shapes.len()
             && utf16_pos >= shapes[shape_idx + 1].start_pos
         {
-            flush_buf(&mut t_xml, &mut buf);
-            t_xml.push_str("</hp:t></hp:run>");
-            runs_xml.push_str(&t_xml);
+            emit_run!();
             shape_idx += 1;
             current_id = shapes[shape_idx].char_shape_id;
-            t_xml = format!(r#"<hp:run charPrIDRef="{current_id}"><hp:t>"#);
         }
 
         match c {
+            '\u{0002}' => {
+                // 텍스트가 있으면 현재 run을 먼저 닫는다 (개체는 run 내 <hp:t> 이전에 위치)
+                if has_t_content || !char_buf.is_empty() {
+                    emit_run!();
+                }
+                if let Some(ctrl) = controls.get(ctrl_idx) {
+                    match ctrl {
+                        Control::Table(tbl) => {
+                            crate::serializer::hwpx::table::write_table(
+                                &mut ctrl_section, tbl, default_tab_width,
+                            );
+                        }
+                        _ => {}
+                    }
+                }
+                ctrl_idx += 1;
+                utf16_pos += u16_len;
+            }
             '\t' => {
-                flush_buf(&mut t_xml, &mut buf);
+                flush_chars!();
                 let w = tab_ext.get(tab_count).map(|e| e[0] as u32).filter(|&v| v > 0).unwrap_or(default_tab_width);
                 let leader = tab_ext.get(tab_count).map(|e| e[1]).unwrap_or(0);
                 let ttype = tab_ext.get(tab_count).map(|e| e[2]).unwrap_or(1);
-                t_xml.push_str(&format!(
+                t_content.push_str(&format!(
                     r#"<hp:tab width="{w}" leader="{leader}" type="{ttype}"/>"#
                 ));
+                has_t_content = true;
                 tab_count += 1;
                 utf16_pos += u16_len;
             }
             '\n' => {
-                flush_buf(&mut t_xml, &mut buf);
-                t_xml.push_str("<hp:lineBreak/>");
+                flush_chars!();
+                t_content.push_str("<hp:lineBreak/>");
+                has_t_content = true;
                 utf16_pos += u16_len;
                 lines_in_para += 1;
                 push_lineseg(
@@ -162,26 +221,17 @@ fn render_paragraph_runs(
             }
             c if (c as u32) < 0x20 => { /* 기타 제어문자 무시 */ }
             c => {
-                buf.push(c);
+                char_buf.push(c);
                 utf16_pos += u16_len;
             }
         }
     }
 
     // 마지막 run 닫기
-    flush_buf(&mut t_xml, &mut buf);
-    t_xml.push_str("</hp:t></hp:run>");
-    runs_xml.push_str(&t_xml);
+    emit_run!();
 
     let vert_end = vert_start + (lines_in_para + 1) * VERT_STEP;
-    (runs_xml, linesegs, vert_end)
-}
-
-fn flush_buf(t_xml: &mut String, buf: &mut String) {
-    if !buf.is_empty() {
-        t_xml.push_str(&xml_escape(buf));
-        buf.clear();
-    }
+    (result, linesegs, vert_end)
 }
 
 fn push_lineseg(out: &mut String, textpos: u32, vertpos: u32) {

@@ -11,6 +11,7 @@ pub mod content;
 pub mod header;
 pub mod section;
 pub mod static_assets;
+pub mod table;
 pub mod utils;
 pub mod writer;
 
@@ -264,6 +265,124 @@ mod tests {
                 r
             );
         }
+    }
+
+    // ─── Stage 3/#186: 표 직렬화 ───
+
+    fn make_table_doc(row_count: u16, col_count: u16, border_fill_id: u16) -> Document {
+        use crate::model::table::{Table, Cell};
+        use crate::model::control::Control;
+        let mut doc = Document::default();
+        let mut sec = crate::model::document::Section::default();
+        let mut para = crate::model::paragraph::Paragraph::default();
+
+        let mut tbl = Table::default();
+        tbl.row_count = row_count;
+        tbl.col_count = col_count;
+        tbl.border_fill_id = border_fill_id;
+        for r in 0..row_count {
+            for c in 0..col_count {
+                tbl.cells.push(Cell::new_empty(c, r, 5000, 1000, border_fill_id));
+            }
+        }
+        para.text = "\u{0002}".to_string();
+        para.controls.push(Control::Table(Box::new(tbl)));
+        sec.paragraphs.push(para);
+        doc.sections.push(sec);
+        doc
+    }
+
+    fn find_table(para: &crate::model::paragraph::Paragraph) -> &crate::model::table::Table {
+        para.controls.iter().find_map(|c| {
+            if let crate::model::control::Control::Table(t) = c { Some(t.as_ref()) } else { None }
+        }).expect("Table control not found")
+    }
+
+    #[test]
+    fn empty_table_roundtrip() {
+        let doc = make_table_doc(2, 3, 1);
+        let bytes = serialize_hwpx(&doc).expect("serialize");
+        let parsed = crate::parser::hwpx::parse_hwpx(&bytes).expect("parse back");
+        assert_eq!(parsed.sections.len(), 1);
+        let p0 = &parsed.sections[0].paragraphs[0];
+        let tbl = find_table(p0);
+        assert_eq!(tbl.row_count, 2, "row_count");
+        assert_eq!(tbl.col_count, 3, "col_count");
+    }
+
+    #[test]
+    fn table_cell_text_roundtrip() {
+        use crate::model::table::{Table, Cell};
+        use crate::model::control::Control;
+        let mut doc = Document::default();
+        let mut sec = crate::model::document::Section::default();
+        let mut para = crate::model::paragraph::Paragraph::default();
+
+        let mut tbl = Table::default();
+        tbl.row_count = 1;
+        tbl.col_count = 1;
+        tbl.border_fill_id = 1;
+        let mut cell = Cell::new_empty(0, 0, 5000, 1000, 1);
+        cell.paragraphs.clear();
+        let mut cp = crate::model::paragraph::Paragraph::default();
+        cp.text = "셀 텍스트".to_string();
+        cell.paragraphs.push(cp);
+        tbl.cells.push(cell);
+
+        para.text = "\u{0002}".to_string();
+        para.controls.push(Control::Table(Box::new(tbl)));
+        sec.paragraphs.push(para);
+        doc.sections.push(sec);
+
+        let bytes = serialize_hwpx(&doc).expect("serialize");
+        let xml = extract_section0_xml(&bytes);
+        assert!(xml.contains("<hp:tbl "), "tbl missing: {}", &xml[..xml.len().min(500)]);
+        assert!(xml.contains("셀 텍스트"), "cell text missing");
+
+        let parsed = crate::parser::hwpx::parse_hwpx(&bytes).expect("parse back");
+        let p0 = &parsed.sections[0].paragraphs[0];
+        let tbl = find_table(p0);
+        assert_eq!(tbl.row_count, 1);
+        let cell_text = tbl.cells[0].paragraphs.iter().map(|p| p.text.as_str()).collect::<Vec<_>>().join("");
+        assert!(cell_text.contains("셀 텍스트"), "cell text roundtrip: {:?}", cell_text);
+    }
+
+    #[test]
+    fn table_borderfillidref() {
+        let doc = make_table_doc(1, 1, 7);
+        let bytes = serialize_hwpx(&doc).expect("serialize");
+        let xml = extract_section0_xml(&bytes);
+        assert!(xml.contains(r#"borderFillIDRef="7""#), "borderFillIDRef missing: {}", &xml[..xml.len().min(500)]);
+    }
+
+    #[test]
+    fn table_cellspan_roundtrip() {
+        use crate::model::table::{Table, Cell};
+        use crate::model::control::Control;
+        let mut doc = Document::default();
+        let mut sec = crate::model::document::Section::default();
+        let mut para = crate::model::paragraph::Paragraph::default();
+
+        let mut tbl = Table::default();
+        tbl.row_count = 2;
+        tbl.col_count = 2;
+        tbl.border_fill_id = 1;
+        let mut merged = Cell::new_empty(0, 0, 10000, 1000, 1);
+        merged.col_span = 2;
+        tbl.cells.push(merged);
+        tbl.cells.push(Cell::new_empty(0, 1, 5000, 1000, 1));
+        tbl.cells.push(Cell::new_empty(1, 1, 5000, 1000, 1));
+        para.text = "\u{0002}".to_string();
+        para.controls.push(Control::Table(Box::new(tbl)));
+        sec.paragraphs.push(para);
+        doc.sections.push(sec);
+
+        let bytes = serialize_hwpx(&doc).expect("serialize");
+        let parsed = crate::parser::hwpx::parse_hwpx(&bytes).expect("parse back");
+        let p0 = &parsed.sections[0].paragraphs[0];
+        let tbl = find_table(p0);
+        assert_eq!(tbl.cells[0].col_span, 2, "colSpan");
+        assert_eq!(tbl.cells[0].row_span, 1, "rowSpan");
     }
 
     // ─── Stage 1/#186: pagePr 동적화 ───
