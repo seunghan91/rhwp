@@ -32,12 +32,34 @@ pub fn write_section(
     let mut vert_cursor: u32 = 0;
 
     // 첫 문단: 템플릿의 `<hp:t/>` 와 `<hp:linesegarray>` 영역을 치환.
-    let first_text = section.paragraphs.first().map(|p| p.text.as_str()).unwrap_or("");
+    let first_para = section.paragraphs.first();
+    let first_text = first_para.map(|p| p.text.as_str()).unwrap_or("");
     let (first_t, first_linesegs, first_advance) = render_paragraph_parts(first_text, vert_cursor);
     vert_cursor = first_advance;
 
     let mut out = EMPTY_SECTION_XML.replacen(TEXT_SLOT, &first_t, 1);
     out = replace_first_linesegs(&out, &first_linesegs);
+
+    // 첫 문단 ID 동적 연동
+    if let Some(p) = first_para {
+        let char_id = p.char_shapes.first().map(|r| r.char_shape_id).unwrap_or(0);
+        out = out.replacen(
+            r#"paraPrIDRef="0""#,
+            &format!(r#"paraPrIDRef="{}""#, p.para_shape_id),
+            1,
+        );
+        out = out.replacen(
+            r#"styleIDRef="0""#,
+            &format!(r#"styleIDRef="{}""#, p.style_id),
+            1,
+        );
+        // 두 번째 run (텍스트 run)의 charPrIDRef만 치환 — 고유 패턴 사용
+        out = out.replacen(
+            &format!(r#"charPrIDRef="0"><hp:t/>"#),
+            &format!(r#"charPrIDRef="{char_id}"><hp:t/>"#),
+            1,
+        );
+    }
 
     // 추가 문단: `</hp:p></hs:sec>` 직전에 `<hp:p>` 요소를 삽입.
     if section.paragraphs.len() > 1 {
@@ -45,7 +67,11 @@ pub fn write_section(
         for p in &section.paragraphs[1..] {
             let (t, linesegs, advance) = render_paragraph_parts(&p.text, vert_cursor);
             vert_cursor = advance;
-            extra.push_str(r#"<hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="0">"#);
+            let char_id = p.char_shapes.first().map(|r| r.char_shape_id).unwrap_or(0);
+            extra.push_str(&format!(
+                r#"<hp:p id="0" paraPrIDRef="{}" styleIDRef="{}" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="{char_id}">"#,
+                p.para_shape_id, p.style_id,
+            ));
             extra.push_str(&t);
             extra.push_str(r#"</hp:run><hp:linesegarray>"#);
             extra.push_str(&linesegs);

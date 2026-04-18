@@ -7,8 +7,8 @@
 
 use crate::model::document::Document;
 use crate::model::style::{
-    Alignment, BorderFill, CharShape, Font, HeadType, LineSpacingType, ParaShape, TabDef,
-    UnderlineType,
+    Alignment, BorderFill, CharShape, Font, HeadType, LineSpacingType, Numbering, ParaShape,
+    Style, TabDef, UnderlineType,
 };
 use super::SerializeError;
 use super::utils::{
@@ -321,10 +321,61 @@ fn write_single_para_pr(out: &mut String, id: usize, ps: &ParaShape) {
     out.push_str("</hh:paraPr>");
 }
 
-fn styles_placeholder(out: &mut String) {
-    out.push_str(r##"<hh:styles itemCnt="1">"##);
-    out.push_str(r##"<hh:style id="0" type="PARA" name="바탕글" engName="Normal" paraPrIDRef="0" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/>"##);
+fn write_styles(out: &mut String, styles: &[Style]) {
+    if styles.is_empty() {
+        out.push_str(r##"<hh:styles itemCnt="1">"##);
+        out.push_str(r##"<hh:style id="0" type="PARA" name="바탕글" engName="Normal" paraPrIDRef="0" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/>"##);
+        out.push_str("</hh:styles>");
+        return;
+    }
+    out.push_str(&format!(r##"<hh:styles itemCnt="{}">"##, styles.len()));
+    for (i, s) in styles.iter().enumerate() {
+        let stype = if s.style_type == 1 { "CHAR" } else { "PARA" };
+        let name = xml_escape(&s.local_name);
+        let engname = xml_escape(&s.english_name);
+        out.push_str(&format!(
+            r##"<hh:style id="{i}" type="{stype}" name="{name}" engName="{engname}" paraPrIDRef="{}" charPrIDRef="{}" nextStyleIDRef="{}" langID="1042" lockForm="0"/>"##,
+            s.para_shape_id, s.char_shape_id, s.next_style_id
+        ));
+    }
     out.push_str("</hh:styles>");
+}
+
+fn write_numberings(out: &mut String, numberings: &[Numbering]) {
+    if numberings.is_empty() {
+        out.push_str(r##"<hh:numberings itemCnt="0"/>"##);
+        return;
+    }
+    out.push_str(&format!(r##"<hh:numberings itemCnt="{}">"##, numberings.len()));
+    for (i, num) in numberings.iter().enumerate() {
+        out.push_str(&format!(r##"<hh:numbering id="{}" start="{}">"##, i + 1, num.start_number));
+        for level in 0..7usize {
+            let head = &num.heads[level];
+            let fmt = num_format_to_str(head.number_format);
+            let text = xml_escape(&num.level_formats[level]);
+            let start = num.level_start_numbers[level];
+            out.push_str(&format!(
+                r##"<hh:paraHead level="{}" start="{}" text="{text}" numFormat="{fmt}" charPrIDRef="{}"/>"##,
+                level + 1, start, head.char_shape_id
+            ));
+        }
+        out.push_str("</hh:numbering>");
+    }
+    out.push_str("</hh:numberings>");
+}
+
+fn num_format_to_str(fmt: u8) -> &'static str {
+    match fmt {
+        1  => "CIRCLED_DIGIT",
+        2  => "HANGUL_LETTER",
+        3  => "HANGUL_NUMBER",
+        4  => "HANGUL_CIRCLED_NUMBER",
+        5  => "ROMAN_CAPITAL",
+        6  => "ROMAN_SMALL",
+        7  => "LATIN_CAPITAL",
+        8  => "LATIN_SMALL",
+        _  => "DIGIT",
+    }
 }
 
 pub fn write_header(doc: &Document) -> Result<Vec<u8>, SerializeError> {
@@ -340,9 +391,9 @@ pub fn write_header(doc: &Document) -> Result<Vec<u8>, SerializeError> {
     write_border_fills(&mut out, &doc.doc_info.border_fills);
     write_char_properties(&mut out, &doc.doc_info.char_shapes);
     write_tab_properties(&mut out, &doc.doc_info.tab_defs);
-    out.push_str(r##"<hh:numberings itemCnt="0"/>"##);
+    write_numberings(&mut out, &doc.doc_info.numberings);
     write_para_properties(&mut out, &doc.doc_info.para_shapes);
-    styles_placeholder(&mut out);
+    write_styles(&mut out, &doc.doc_info.styles);
     out.push_str("</hh:refList>");
 
     out.push_str(r#"<hh:compatibleDocument targetProgram="HWP201X"><hh:layoutCompatibility/></hh:compatibleDocument>"#);
@@ -628,6 +679,81 @@ mod tests {
         let bytes = crate::serializer::hwpx::serialize_hwpx(&doc).expect("serialize");
         let xml = extract_header_xml(&bytes);
         assert!(xml.contains(r##"<hh:paraProperties itemCnt="1">"##), "paraPr placeholder missing");
+    }
+
+    // ─── Stage 4: styles / numberings ───
+
+    use crate::model::style::{Numbering, NumberingHead, Style};
+
+    #[test]
+    fn empty_styles_emits_placeholder() {
+        let doc = Document::default();
+        let bytes = crate::serializer::hwpx::serialize_hwpx(&doc).expect("serialize");
+        let xml = extract_header_xml(&bytes);
+        assert!(xml.contains(r##"<hh:styles itemCnt="1">"##), "styles placeholder missing: {xml}");
+        assert!(xml.contains(r#"name="바탕글""#), "바탕글 missing");
+    }
+
+    #[test]
+    fn style_roundtrip() {
+        let mut doc = Document::default();
+        doc.doc_info.styles.push(Style {
+            local_name: "바탕글".to_string(),
+            english_name: "Normal".to_string(),
+            style_type: 0,
+            next_style_id: 0,
+            para_shape_id: 2,
+            char_shape_id: 1,
+            ..Default::default()
+        });
+        doc.doc_info.styles.push(Style {
+            local_name: "본문".to_string(),
+            english_name: "Body".to_string(),
+            style_type: 0,
+            next_style_id: 1,
+            para_shape_id: 3,
+            char_shape_id: 2,
+            ..Default::default()
+        });
+
+        let bytes = crate::serializer::hwpx::serialize_hwpx(&doc).expect("serialize");
+        let xml = extract_header_xml(&bytes);
+        let (parsed, _) = parse_hwpx_header(&xml).expect("parse header");
+
+        assert_eq!(parsed.styles.len(), 2);
+        assert_eq!(parsed.styles[0].local_name, "바탕글");
+        assert_eq!(parsed.styles[0].para_shape_id, 2);
+        assert_eq!(parsed.styles[0].char_shape_id, 1);
+        assert_eq!(parsed.styles[1].local_name, "본문");
+        assert_eq!(parsed.styles[1].next_style_id, 1);
+    }
+
+    #[test]
+    fn empty_numberings_emits_empty_tag() {
+        let doc = Document::default();
+        let bytes = crate::serializer::hwpx::serialize_hwpx(&doc).expect("serialize");
+        let xml = extract_header_xml(&bytes);
+        assert!(xml.contains(r##"<hh:numberings itemCnt="0"/>"##), "empty numberings missing: {xml}");
+    }
+
+    #[test]
+    fn numbering_roundtrip() {
+        let mut num = Numbering::default();
+        num.start_number = 1;
+        num.heads[0] = NumberingHead { number_format: 0, char_shape_id: 1, ..Default::default() };
+        num.level_formats[0] = "^1.".to_string();
+        num.level_start_numbers[0] = 1;
+
+        let mut doc = Document::default();
+        doc.doc_info.numberings.push(num);
+
+        let bytes = crate::serializer::hwpx::serialize_hwpx(&doc).expect("serialize");
+        let xml = extract_header_xml(&bytes);
+        let (parsed, _) = parse_hwpx_header(&xml).expect("parse header");
+
+        assert_eq!(parsed.numberings.len(), 1);
+        assert_eq!(parsed.numberings[0].start_number, 1);
+        assert_eq!(parsed.numberings[0].level_start_numbers[0], 1);
     }
 
     #[test]
