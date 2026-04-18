@@ -10,11 +10,12 @@
 
 use crate::model::document::{Document, Section};
 use crate::model::page::{BindingMethod, PageDef};
+use crate::model::paragraph::Paragraph;
 use super::utils::xml_escape;
 use super::SerializeError;
 
 const EMPTY_SECTION_XML: &str = include_str!("templates/empty_section0.xml");
-const TEXT_SLOT: &str = "<hp:t/>";
+const TEXT_RUN_SLOT: &str = r#"<hp:run charPrIDRef="0"><hp:t/></hp:run>"#;
 const LINESEG_SLOT_OPEN: &str = "<hp:linesegarray>";
 const LINESEG_SLOT_CLOSE: &str = "</hp:linesegarray>";
 const PARA_CLOSE: &str = "</hp:p></hs:sec>";
@@ -37,15 +38,18 @@ pub fn write_section(
         if s > 0 { s as u32 } else { TAB_FALLBACK_WIDTH }
     };
 
-    // 첫 문단: 템플릿의 `<hp:t/>` 와 `<hp:linesegarray>` 영역을 치환.
     let first_para = section.paragraphs.first();
-    let first_text = first_para.map(|p| p.text.as_str()).unwrap_or("");
-    let first_tab_ext = first_para.map(|p| p.tab_extended.as_slice()).unwrap_or(&[]);
-    let (first_t, first_linesegs, first_advance) = render_paragraph_parts(first_text, vert_cursor, first_tab_ext, tab_width);
-    vert_cursor = first_advance;
 
-    let mut out = EMPTY_SECTION_XML.replacen(TEXT_SLOT, &first_t, 1);
-    out = replace_first_linesegs(&out, &first_linesegs);
+    // 첫 문단: TEXT_RUN_SLOT 전체를 생성된 run(s)으로 치환.
+    let mut out = if let Some(p) = first_para {
+        let (first_runs, first_linesegs, first_advance) =
+            render_paragraph_runs(p, vert_cursor, tab_width);
+        vert_cursor = first_advance;
+        let o = EMPTY_SECTION_XML.replacen(TEXT_RUN_SLOT, &first_runs, 1);
+        replace_first_linesegs(&o, &first_linesegs)
+    } else {
+        EMPTY_SECTION_XML.to_string()
+    };
 
     // secPr pagePr 동적화
     substitute_page_def(&mut out, &section.section_def.page_def);
@@ -57,9 +61,9 @@ pub fn write_section(
         );
     }
 
-    // 첫 문단 ID 동적 연동
+    // 첫 문단 paraPrIDRef / styleIDRef 동적 연동
+    // (charPrIDRef는 render_paragraph_runs 내에서 처리됨)
     if let Some(p) = first_para {
-        let char_id = p.char_shapes.first().map(|r| r.char_shape_id).unwrap_or(0);
         out = out.replacen(
             r#"paraPrIDRef="0""#,
             &format!(r#"paraPrIDRef="{}""#, p.para_shape_id),
@@ -70,27 +74,20 @@ pub fn write_section(
             &format!(r#"styleIDRef="{}""#, p.style_id),
             1,
         );
-        // 두 번째 run (텍스트 run)의 charPrIDRef만 치환 — 고유 패턴 사용
-        out = out.replacen(
-            &format!(r#"charPrIDRef="0"><hp:t/>"#),
-            &format!(r#"charPrIDRef="{char_id}"><hp:t/>"#),
-            1,
-        );
     }
 
     // 추가 문단: `</hp:p></hs:sec>` 직전에 `<hp:p>` 요소를 삽입.
     if section.paragraphs.len() > 1 {
         let mut extra = String::new();
         for p in &section.paragraphs[1..] {
-            let (t, linesegs, advance) = render_paragraph_parts(&p.text, vert_cursor, &p.tab_extended, tab_width);
+            let (runs, linesegs, advance) = render_paragraph_runs(p, vert_cursor, tab_width);
             vert_cursor = advance;
-            let char_id = p.char_shapes.first().map(|r| r.char_shape_id).unwrap_or(0);
             extra.push_str(&format!(
-                r#"<hp:p id="0" paraPrIDRef="{}" styleIDRef="{}" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="{char_id}">"#,
+                r#"<hp:p id="0" paraPrIDRef="{}" styleIDRef="{}" pageBreak="0" columnBreak="0" merged="0">"#,
                 p.para_shape_id, p.style_id,
             ));
-            extra.push_str(&t);
-            extra.push_str(r#"</hp:run><hp:linesegarray>"#);
+            extra.push_str(&runs);
+            extra.push_str(r#"<hp:linesegarray>"#);
             extra.push_str(&linesegs);
             extra.push_str(r#"</hp:linesegarray></hp:p>"#);
         }
@@ -100,12 +97,26 @@ pub fn write_section(
     Ok(out.into_bytes())
 }
 
-/// 문단 텍스트 하나를 (`<hp:t>` XML, lineseg XML, 다음 vert_cursor)로 변환.
-fn render_paragraph_parts(text: &str, vert_start: u32, tab_ext: &[[u16; 7]], default_tab_width: u32) -> (String, String, u32) {
-    let mut t_xml = String::from("<hp:t>");
+/// 문단 하나를 (`<hp:run>…</hp:run>` XML, lineseg XML, 다음 vert_cursor)로 변환.
+///
+/// `para.char_shapes`가 복수이면 UTF-16 offset 경계에서 run을 분리한다.
+fn render_paragraph_runs(
+    para: &Paragraph,
+    vert_start: u32,
+    default_tab_width: u32,
+) -> (String, String, u32) {
+    let text = &para.text;
+    let tab_ext = &para.tab_extended;
+    let shapes = &para.char_shapes;
+
+    let mut runs_xml = String::new();
     let mut linesegs = String::new();
     push_lineseg(&mut linesegs, 0, vert_start);
 
+    let first_id = shapes.first().map(|s| s.char_shape_id).unwrap_or(0);
+    let mut shape_idx: usize = 0;
+    let mut current_id = first_id;
+    let mut t_xml = format!(r#"<hp:run charPrIDRef="{current_id}"><hp:t>"#);
     let mut buf = String::new();
     let mut utf16_pos: u32 = 0;
     let mut lines_in_para: u32 = 0;
@@ -113,6 +124,19 @@ fn render_paragraph_parts(text: &str, vert_start: u32, tab_ext: &[[u16; 7]], def
 
     for c in text.chars() {
         let u16_len = c.len_utf16() as u32;
+
+        // run 경계 도달 시 현재 run 닫고 새 run 열기
+        while shape_idx + 1 < shapes.len()
+            && utf16_pos >= shapes[shape_idx + 1].start_pos
+        {
+            flush_buf(&mut t_xml, &mut buf);
+            t_xml.push_str("</hp:t></hp:run>");
+            runs_xml.push_str(&t_xml);
+            shape_idx += 1;
+            current_id = shapes[shape_idx].char_shape_id;
+            t_xml = format!(r#"<hp:run charPrIDRef="{current_id}"><hp:t>"#);
+        }
+
         match c {
             '\t' => {
                 flush_buf(&mut t_xml, &mut buf);
@@ -143,12 +167,14 @@ fn render_paragraph_parts(text: &str, vert_start: u32, tab_ext: &[[u16; 7]], def
             }
         }
     }
-    flush_buf(&mut t_xml, &mut buf);
-    t_xml.push_str("</hp:t>");
 
-    // 이 문단이 차지한 줄 수 = 1 + 소프트 브레이크 수. 다음 문단 시작 vert 위치.
+    // 마지막 run 닫기
+    flush_buf(&mut t_xml, &mut buf);
+    t_xml.push_str("</hp:t></hp:run>");
+    runs_xml.push_str(&t_xml);
+
     let vert_end = vert_start + (lines_in_para + 1) * VERT_STEP;
-    (t_xml, linesegs, vert_end)
+    (runs_xml, linesegs, vert_end)
 }
 
 fn flush_buf(t_xml: &mut String, buf: &mut String) {

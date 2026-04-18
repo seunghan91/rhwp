@@ -322,6 +322,52 @@ mod tests {
         assert!(xml.contains(r#"gutter="1000""#), "gutter missing");
     }
 
+    // ─── Stage 2/#186: 다중 run 분할 ───
+
+    #[test]
+    fn single_charshape_single_run() {
+        use crate::model::paragraph::CharShapeRef;
+        let mut doc = Document::default();
+        let mut sec = crate::model::document::Section::default();
+        let mut para = crate::model::paragraph::Paragraph::default();
+        para.text = "hello".to_string();
+        para.char_shapes = vec![CharShapeRef { start_pos: 0, char_shape_id: 7 }];
+        sec.paragraphs.push(para);
+        doc.sections.push(sec);
+        let bytes = serialize_hwpx(&doc).expect("serialize");
+        let xml = extract_section0_xml(&bytes);
+        let run_count = xml.matches("<hp:run ").count();
+        // 두 번째 run만 (첫 run은 secPr 포함 run)
+        assert_eq!(run_count, 2, "expected 2 hp:run (secPr + text), got {run_count}: {xml}");
+        assert!(xml.contains(r#"charPrIDRef="7""#), "charPrIDRef=7 missing: {xml}");
+        assert!(xml.contains("<hp:t>hello</hp:t>"), "text missing: {xml}");
+    }
+
+    #[test]
+    fn multi_run_splits_correctly() {
+        use crate::model::paragraph::CharShapeRef;
+        let mut doc = Document::default();
+        let mut sec = crate::model::document::Section::default();
+        let mut para = crate::model::paragraph::Paragraph::default();
+        // "AB CD" — A,B belong to shape 1 (pos 0), space belongs to shape 2 (pos 2), C,D shape 3 (pos 3)
+        para.text = "AB CD".to_string();
+        para.char_shapes = vec![
+            CharShapeRef { start_pos: 0, char_shape_id: 1 },
+            CharShapeRef { start_pos: 2, char_shape_id: 2 },
+            CharShapeRef { start_pos: 3, char_shape_id: 3 },
+        ];
+        sec.paragraphs.push(para);
+        doc.sections.push(sec);
+        let bytes = serialize_hwpx(&doc).expect("serialize");
+        let xml = extract_section0_xml(&bytes);
+        // 3 text runs + 1 secPr run = 4 total
+        let run_count = xml.matches("<hp:run ").count();
+        assert_eq!(run_count, 4, "expected 4 hp:run, got {run_count}: {xml}");
+        assert!(xml.contains(r#"charPrIDRef="1"><hp:t>AB</hp:t>"#), "run1 missing: {xml}");
+        assert!(xml.contains(r#"charPrIDRef="2"><hp:t> </hp:t>"#), "run2 missing: {xml}");
+        assert!(xml.contains(r#"charPrIDRef="3"><hp:t>CD</hp:t>"#), "run3 missing: {xml}");
+    }
+
     #[test]
     fn pagePr_landscape_narrow() {
         use crate::model::page::PageDef;
