@@ -9,6 +9,7 @@
 
 pub mod content;
 pub mod header;
+pub mod picture;
 pub mod section;
 pub mod static_assets;
 pub mod table;
@@ -58,21 +59,85 @@ pub fn serialize_hwpx(doc: &Document) -> Result<Vec<u8>, SerializeError> {
     // 7. META-INF/container.rdf
     z.write_deflated("META-INF/container.rdf", META_INF_CONTAINER_RDF.as_bytes())?;
 
-    // 8. Contents/content.hpf — 정확히 1섹션 + BinData 없는 빈 문서일 때는 레퍼런스 템플릿
-    if doc.sections.len() == 1 && doc.bin_data_content.is_empty() {
+    // 8. BinData ZIP 엔트리 수집 + 저장
+    let bin_entries = collect_bin_data(doc, &mut z)?;
+
+    // 9. Contents/content.hpf — BinData 없고 섹션 1개이면 템플릿 사용
+    if doc.sections.len() == 1 && bin_entries.is_empty() {
         z.write_deflated("Contents/content.hpf", EMPTY_CONTENT_HPF.as_bytes())?;
     } else {
-        let content_hpf = content::write_content_hpf(&section_hrefs, &[])?;
+        let content_hpf = content::write_content_hpf(&section_hrefs, &bin_entries)?;
         z.write_deflated("Contents/content.hpf", &content_hpf)?;
     }
 
-    // 9. META-INF/container.xml
+    // 10. META-INF/container.xml
     z.write_deflated("META-INF/container.xml", META_INF_CONTAINER_XML.as_bytes())?;
 
-    // 10. META-INF/manifest.xml
+    // 11. META-INF/manifest.xml
     z.write_deflated("META-INF/manifest.xml", META_INF_MANIFEST_XML.as_bytes())?;
 
     z.finish()
+}
+
+/// 문서 전체를 순회하며 Picture 컨트롤을 찾아 BinData ZIP 엔트리를 기록하고
+/// content.hpf manifest용 BinDataEntry 목록을 반환한다.
+fn collect_bin_data(
+    doc: &Document,
+    z: &mut writer::HwpxZipWriter,
+) -> Result<Vec<content::BinDataEntry>, SerializeError> {
+    use crate::model::control::Control;
+
+    let mut entries: Vec<content::BinDataEntry> = Vec::new();
+    let mut written_ids: std::collections::HashSet<u16> = std::collections::HashSet::new();
+
+    for sec in &doc.sections {
+        collect_bin_data_in_paras(&sec.paragraphs, doc, z, &mut entries, &mut written_ids)?;
+    }
+    Ok(entries)
+}
+
+fn collect_bin_data_in_paras(
+    paras: &[crate::model::paragraph::Paragraph],
+    doc: &Document,
+    z: &mut writer::HwpxZipWriter,
+    entries: &mut Vec<content::BinDataEntry>,
+    written_ids: &mut std::collections::HashSet<u16>,
+) -> Result<(), SerializeError> {
+    use crate::model::control::Control;
+
+    for para in paras {
+        for ctrl in &para.controls {
+            match ctrl {
+                Control::Picture(pic) => {
+                    let id = pic.image_attr.bin_data_id;
+                    if id > 0 && written_ids.insert(id) {
+                        // BinDataContent에서 실제 데이터 탐색
+                        if let Some(bc) = doc.bin_data_content.iter().find(|b| b.id == id) {
+                            let ext = &bc.extension;
+                            let path = picture::bin_data_path(id, ext);
+                            let mime = picture::media_type(ext);
+                            z.write_deflated(&path, &bc.data)?;
+                            entries.push(content::BinDataEntry {
+                                id: format!("image{}", id),
+                                href: path,
+                                media_type: mime.to_string(),
+                            });
+                        }
+                    }
+                }
+                Control::Table(tbl) => {
+                    // 셀 내 문단 재귀 처리
+                    for cell in &tbl.cells {
+                        collect_bin_data_in_paras(
+                            &cell.paragraphs, doc, z, entries, written_ids,
+                        )?;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -265,6 +330,80 @@ mod tests {
                 r
             );
         }
+    }
+
+    // ─── Stage 4/#186: 그림 직렬화 + BinData ───
+
+    fn make_picture_doc(bin_data_id: u16, ext: &str, data: Vec<u8>, width: u32, height: u32) -> Document {
+        use crate::model::image::{Picture, ImageAttr};
+        use crate::model::control::Control;
+        use crate::model::bin_data::BinDataContent;
+        let mut doc = Document::default();
+
+        // BinDataContent 등록
+        doc.bin_data_content.push(BinDataContent {
+            id: bin_data_id,
+            data,
+            extension: ext.to_string(),
+        });
+
+        let mut sec = crate::model::document::Section::default();
+        let mut para = crate::model::paragraph::Paragraph::default();
+        let mut pic = Picture::default();
+        pic.common.width = width;
+        pic.common.height = height;
+        pic.image_attr = ImageAttr { bin_data_id, ..Default::default() };
+        para.text = "\u{0002}".to_string();
+        para.controls.push(Control::Picture(Box::new(pic)));
+        sec.paragraphs.push(para);
+        doc.sections.push(sec);
+        doc
+    }
+
+    #[test]
+    fn picture_bindata_entry_generated() {
+        let png_bytes = vec![0x89u8, 0x50, 0x4e, 0x47]; // PNG magic
+        let doc = make_picture_doc(1, "png", png_bytes, 5000, 3000);
+        let bytes = serialize_hwpx(&doc).expect("serialize");
+        let cursor = std::io::Cursor::new(&bytes);
+        let archive = zip::ZipArchive::new(cursor).expect("zip");
+        let names: Vec<String> = archive.file_names().map(String::from).collect();
+        assert!(names.iter().any(|n| n == "BinData/image1.png"), "BinData missing: {:?}", names);
+    }
+
+    #[test]
+    fn picture_manifest_entry() {
+        let png_bytes = vec![0x89u8, 0x50, 0x4e, 0x47];
+        let doc = make_picture_doc(1, "png", png_bytes, 5000, 3000);
+        let bytes = serialize_hwpx(&doc).expect("serialize");
+        let cursor = std::io::Cursor::new(&bytes);
+        let mut archive = zip::ZipArchive::new(cursor).expect("zip");
+        let mut hpf = archive.by_name("Contents/content.hpf").expect("content.hpf");
+        let mut xml = String::new();
+        std::io::Read::read_to_string(&mut hpf, &mut xml).expect("read");
+        assert!(xml.contains("BinData/image1.png"), "manifest missing: {xml}");
+        assert!(xml.contains("image/png"), "media-type missing");
+    }
+
+    #[test]
+    fn picture_roundtrip_attr() {
+        let png_bytes = vec![0x89u8, 0x50, 0x4e, 0x47];
+        let doc = make_picture_doc(2, "png", png_bytes, 7200, 5400);
+        let bytes = serialize_hwpx(&doc).expect("serialize");
+        let xml = extract_section0_xml(&bytes);
+        assert!(xml.contains("<hp:pic "), "hp:pic missing");
+        assert!(xml.contains(r#"binaryItemIDRef="image2""#), "binaryItemIDRef missing: {xml}");
+        assert!(xml.contains(r#"width="7200""#), "width missing");
+        assert!(xml.contains(r#"height="5400""#), "height missing");
+
+        let parsed = crate::parser::hwpx::parse_hwpx(&bytes).expect("parse back");
+        let p0 = &parsed.sections[0].paragraphs[0];
+        let pic_ctrl = p0.controls.iter().find_map(|c| {
+            if let crate::model::control::Control::Picture(p) = c { Some(p.as_ref()) } else { None }
+        }).expect("Picture control not found");
+        assert_eq!(pic_ctrl.image_attr.bin_data_id, 2, "bin_data_id roundtrip");
+        assert_eq!(pic_ctrl.common.width, 7200, "width roundtrip");
+        assert_eq!(pic_ctrl.common.height, 5400, "height roundtrip");
     }
 
     // ─── Stage 3/#186: 표 직렬화 ───

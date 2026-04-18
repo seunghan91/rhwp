@@ -189,6 +189,11 @@ pub(crate) fn render_paragraph_runs(
                                 &mut ctrl_section, tbl, default_tab_width,
                             );
                         }
+                        Control::Picture(pic) => {
+                            crate::serializer::hwpx::picture::write_picture(
+                                &mut ctrl_section, pic,
+                            );
+                        }
                         _ => {}
                     }
                 }
