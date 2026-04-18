@@ -2,12 +2,19 @@
 //!
 //! Stage 1: fontfaces 동적 생성
 //! Stage 2: charPr 동적 생성
-//! Stage 3+: paraPr / styles 등 순차적으로 동적 생성
+//! Stage 3: borderFills / tabPr / paraPr 동적 생성
+//! Stage 4+: styles / numberings + section.xml ID 연동
 
 use crate::model::document::Document;
-use crate::model::style::{CharShape, Font, UnderlineType};
+use crate::model::style::{
+    Alignment, BorderFill, CharShape, Font, HeadType, LineSpacingType, ParaShape, TabDef,
+    UnderlineType,
+};
 use super::SerializeError;
-use super::utils::{color_ref_to_hex, line_shape_to_str, xml_escape};
+use super::utils::{
+    alignment_to_str, border_line_type_to_str, border_width_to_str,
+    color_ref_to_hex, line_shape_to_str, line_spacing_type_to_str, xml_escape,
+};
 
 const LANG_NAMES: [&str; 7] = ["HANGUL", "LATIN", "HANJA", "JAPANESE", "OTHER", "SYMBOL", "USER"];
 
@@ -30,22 +37,70 @@ const HEAD_NS: &str = concat!(
     r#"version="1.2" secCnt="1""#,
 );
 
-fn border_fills_placeholder(out: &mut String) {
-    out.push_str(r##"<hh:borderFills itemCnt="2">"##);
-    for id in [1u32, 2] {
+fn write_border_fills(out: &mut String, border_fills: &[BorderFill]) {
+    if border_fills.is_empty() {
+        // 최소 placeholder: ID 1(없음), ID 2(winBrush) — charPr 기본값이 id=2 참조
+        out.push_str(r##"<hh:borderFills itemCnt="2">"##);
+        for id in [1u32, 2] {
+            out.push_str(&format!(
+                r##"<hh:borderFill id="{id}" threeD="0" shadow="0" centerLine="NONE" breakCellSeparateLine="0">"##
+            ));
+            out.push_str(r##"<hh:slash type="NONE" Crooked="0" isCounter="0"/>"##);
+            out.push_str(r##"<hh:backSlash type="NONE" Crooked="0" isCounter="0"/>"##);
+            for dir in ["left", "right", "top", "bottom"] {
+                out.push_str(&format!(
+                    r##"<hh:{dir}Border type="NONE" width="0.1 mm" color="#000000"/>"##
+                ));
+            }
+            out.push_str(r##"<hh:diagonal type="SOLID" width="0.1 mm" color="#000000"/>"##);
+            if id == 2 {
+                out.push_str(r##"<hc:fillBrush><hc:winBrush faceColor="none" hatchColor="#999999" alpha="0"/></hc:fillBrush>"##);
+            }
+            out.push_str("</hh:borderFill>");
+        }
+        out.push_str("</hh:borderFills>");
+        return;
+    }
+
+    out.push_str(&format!(r##"<hh:borderFills itemCnt="{}">"##, border_fills.len()));
+    for (i, bf) in border_fills.iter().enumerate() {
+        let id = i + 1; // 1-based
         out.push_str(&format!(
             r##"<hh:borderFill id="{id}" threeD="0" shadow="0" centerLine="NONE" breakCellSeparateLine="0">"##
         ));
         out.push_str(r##"<hh:slash type="NONE" Crooked="0" isCounter="0"/>"##);
         out.push_str(r##"<hh:backSlash type="NONE" Crooked="0" isCounter="0"/>"##);
-        for dir in ["left", "right", "top", "bottom"] {
+        let dir_names = ["left", "right", "top", "bottom"];
+        for (di, dir) in dir_names.iter().enumerate() {
+            let b = &bf.borders[di];
+            let btype = border_line_type_to_str(&b.line_type);
+            let bwidth = border_width_to_str(b.width);
+            let bcolor = color_ref_to_hex(b.color);
             out.push_str(&format!(
-                r##"<hh:{dir}Border type="NONE" width="0.1 mm" color="#000000"/>"##
+                r##"<hh:{dir}Border type="{btype}" width="{bwidth}" color="{bcolor}"/>"##
             ));
         }
-        out.push_str(r##"<hh:diagonal type="SOLID" width="0.1 mm" color="#000000"/>"##);
-        if id == 2 {
-            out.push_str(r##"<hc:fillBrush><hc:winBrush faceColor="none" hatchColor="#999999" alpha="0"/></hc:fillBrush>"##);
+        {
+            let d = &bf.diagonal;
+            let dtype = border_line_type_to_str(&crate::model::style::BorderLineType::Solid);
+            let _ = dtype;
+            let dwidth = border_width_to_str(d.width);
+            let dcolor = color_ref_to_hex(d.color);
+            out.push_str(&format!(
+                r##"<hh:diagonal type="{}" width="{dwidth}" color="{dcolor}"/>"##,
+                if d.diagonal_type == 0 { "NONE" } else { "SOLID" }
+            ));
+        }
+        use crate::model::style::FillType;
+        if let FillType::Solid = bf.fill.fill_type {
+            if let Some(ref s) = bf.fill.solid {
+                let face = color_ref_to_hex(s.background_color);
+                let hatch = color_ref_to_hex(s.pattern_color);
+                let alpha = bf.fill.alpha;
+                out.push_str(&format!(
+                    r##"<hc:fillBrush><hc:winBrush faceColor="{face}" hatchColor="{hatch}" alpha="{alpha}"/></hc:fillBrush>"##
+                ));
+            }
         }
         out.push_str("</hh:borderFill>");
     }
@@ -148,22 +203,122 @@ fn lang7_attr_i8(tag: &str, vals: &[i8; 7]) -> String {
     )
 }
 
-fn tab_properties_placeholder(out: &mut String) {
-    out.push_str(r##"<hh:tabProperties itemCnt="1"><hh:tabPr id="0" autoTabLeft="0" autoTabRight="0"/></hh:tabProperties>"##);
+fn write_tab_properties(out: &mut String, tab_defs: &[TabDef]) {
+    if tab_defs.is_empty() {
+        out.push_str(r##"<hh:tabProperties itemCnt="1"><hh:tabPr id="0" autoTabLeft="0" autoTabRight="0"/></hh:tabProperties>"##);
+        return;
+    }
+    out.push_str(&format!(r##"<hh:tabProperties itemCnt="{}">"##, tab_defs.len()));
+    for (i, td) in tab_defs.iter().enumerate() {
+        let left  = if td.auto_tab_left  { "1" } else { "0" };
+        let right = if td.auto_tab_right { "1" } else { "0" };
+        if td.tabs.is_empty() {
+            out.push_str(&format!(
+                r##"<hh:tabPr id="{i}" autoTabLeft="{left}" autoTabRight="{right}"/>"##
+            ));
+        } else {
+            out.push_str(&format!(
+                r##"<hh:tabPr id="{i}" autoTabLeft="{left}" autoTabRight="{right}">"##
+            ));
+            for item in &td.tabs {
+                let tab_type = match item.tab_type {
+                    1 => "RIGHT",
+                    2 => "CENTER",
+                    3 => "DECIMAL",
+                    _ => "LEFT",
+                };
+                let leader = match item.fill_type {
+                    1 => "SOLID",
+                    2 => "DOT",
+                    3 => "DASH",
+                    4 => "DASH_DOT",
+                    5 => "DASH_DOT_DOT",
+                    6 => "LONG_DASH",
+                    7 => "CIRCLE",
+                    8 => "DOUBLE_LINE",
+                    9 => "THIN_THICK",
+                    10 => "THICK_THIN",
+                    11 => "TRIM",
+                    _ => "NONE",
+                };
+                out.push_str(&format!(
+                    r##"<hh:tabItem pos="{}" type="{tab_type}" leader="{leader}"/>"##,
+                    item.position
+                ));
+            }
+            out.push_str("</hh:tabPr>");
+        }
+    }
+    out.push_str("</hh:tabProperties>");
 }
 
-fn para_properties_placeholder(out: &mut String) {
-    out.push_str(r##"<hh:paraProperties itemCnt="1">"##);
-    out.push_str(r##"<hh:paraPr id="0" tabPrIDRef="0" condense="0" fontLineHeight="0" snapToGrid="1" suppressLineNumbers="0" checked="0">"##);
-    out.push_str(r##"<hh:align horizontal="JUSTIFY" vertical="BASELINE"/>"##);
-    out.push_str(r##"<hh:heading type="NONE" idRef="0" level="0"/>"##);
-    out.push_str(r##"<hh:breakSetting breakLatinWord="KEEP_WORD" breakNonLatinWord="KEEP_WORD" widowOrphan="0" keepWithNext="0" keepLines="0" pageBreakBefore="0" lineWrap="BREAK"/>"##);
-    out.push_str(r##"<hh:autoSpacing eAsianEng="0" eAsianNum="0"/>"##);
-    out.push_str(r##"<hh:margin><hc:intent value="0" unit="HWPUNIT"/><hc:left value="0" unit="HWPUNIT"/><hc:right value="0" unit="HWPUNIT"/><hc:prev value="0" unit="HWPUNIT"/><hc:next value="0" unit="HWPUNIT"/></hh:margin>"##);
-    out.push_str(r##"<hh:lineSpacing type="PERCENT" value="160" unit="HWPUNIT"/>"##);
-    out.push_str(r##"<hh:border borderFillIDRef="2" offsetLeft="0" offsetRight="0" offsetTop="0" offsetBottom="0" connect="0" ignoreMargin="0"/>"##);
-    out.push_str("</hh:paraPr>");
+fn write_para_properties(out: &mut String, para_shapes: &[ParaShape]) {
+    if para_shapes.is_empty() {
+        out.push_str(r##"<hh:paraProperties itemCnt="1">"##);
+        write_single_para_pr(out, 0, &ParaShape::default());
+        out.push_str("</hh:paraProperties>");
+        return;
+    }
+    out.push_str(&format!(r##"<hh:paraProperties itemCnt="{}">"##, para_shapes.len()));
+    for (i, ps) in para_shapes.iter().enumerate() {
+        write_single_para_pr(out, i, ps);
+    }
     out.push_str("</hh:paraProperties>");
+}
+
+fn write_single_para_pr(out: &mut String, id: usize, ps: &ParaShape) {
+    out.push_str(&format!(
+        r##"<hh:paraPr id="{id}" tabPrIDRef="{}" condense="0" fontLineHeight="0" snapToGrid="1" suppressLineNumbers="0" checked="0">"##,
+        ps.tab_def_id
+    ));
+
+    let align = alignment_to_str(ps.alignment);
+    out.push_str(&format!(r##"<hh:align horizontal="{align}" vertical="BASELINE"/>"##));
+
+    let head_type_str = match ps.head_type {
+        HeadType::Outline => "OUTLINE",
+        HeadType::Number  => "NUMBER",
+        HeadType::Bullet  => "BULLET",
+        HeadType::None    => "NONE",
+    };
+    out.push_str(&format!(
+        r##"<hh:heading type="{head_type_str}" idRef="{}" level="{}"/>"##,
+        ps.numbering_id, ps.para_level
+    ));
+
+    let widow_orphan   = (ps.attr2 >> 5) & 1;
+    let keep_with_next = (ps.attr2 >> 6) & 1;
+    let keep_lines     = (ps.attr2 >> 7) & 1;
+    let page_break     = (ps.attr2 >> 8) & 1;
+    out.push_str(&format!(
+        r##"<hh:breakSetting breakLatinWord="KEEP_WORD" breakNonLatinWord="KEEP_WORD" widowOrphan="{widow_orphan}" keepWithNext="{keep_with_next}" keepLines="{keep_lines}" pageBreakBefore="{page_break}" lineWrap="BREAK"/>"##
+    ));
+
+    let e_asian_eng = (ps.attr1 >> 20) & 1;
+    let e_asian_num = (ps.attr1 >> 21) & 1;
+    out.push_str(&format!(
+        r##"<hh:autoSpacing eAsianEng="{e_asian_eng}" eAsianNum="{e_asian_num}"/>"##
+    ));
+
+    out.push_str(&format!(
+        r##"<hh:margin left="{}" right="{}" indent="{}" prev="{}" next="{}"/>"##,
+        ps.margin_left, ps.margin_right, ps.indent, ps.spacing_before, ps.spacing_after
+    ));
+
+    let ls_type = line_spacing_type_to_str(ps.line_spacing_type);
+    out.push_str(&format!(
+        r##"<hh:lineSpacing type="{ls_type}" value="{}"/>"##,
+        ps.line_spacing
+    ));
+
+    out.push_str(&format!(
+        r##"<hh:border borderFillIDRef="{}" offsetLeft="{}" offsetRight="{}" offsetTop="{}" offsetBottom="{}" connect="0" ignoreMargin="0"/>"##,
+        ps.border_fill_id,
+        ps.border_spacing[0], ps.border_spacing[1],
+        ps.border_spacing[2], ps.border_spacing[3],
+    ));
+
+    out.push_str("</hh:paraPr>");
 }
 
 fn styles_placeholder(out: &mut String) {
@@ -182,11 +337,11 @@ pub fn write_header(doc: &Document) -> Result<Vec<u8>, SerializeError> {
 
     out.push_str("<hh:refList>");
     write_fontfaces(&mut out, &doc.doc_info.font_faces);
-    border_fills_placeholder(&mut out);
+    write_border_fills(&mut out, &doc.doc_info.border_fills);
     write_char_properties(&mut out, &doc.doc_info.char_shapes);
-    tab_properties_placeholder(&mut out);
+    write_tab_properties(&mut out, &doc.doc_info.tab_defs);
     out.push_str(r##"<hh:numberings itemCnt="0"/>"##);
-    para_properties_placeholder(&mut out);
+    write_para_properties(&mut out, &doc.doc_info.para_shapes);
     styles_placeholder(&mut out);
     out.push_str("</hh:refList>");
 
@@ -382,6 +537,131 @@ mod tests {
         assert_eq!(p.spacings, [0, -5, 0, 0, 0, 0, 0]);
         assert_eq!(p.text_color, 0x000000FF);
         assert_eq!(p.shade_color, 0xFFFFFFFF);
+        assert_eq!(p.border_fill_id, 2);
+    }
+
+    // ─── Stage 3: borderFills / tabPr / paraPr ───
+
+    use crate::model::style::{
+        Alignment, BorderFill, BorderLine, BorderLineType, Fill, FillType,
+        LineSpacingType, ParaShape, SolidFill, TabDef, TabItem,
+    };
+
+    #[test]
+    fn empty_border_fills_emits_placeholder() {
+        let doc = Document::default();
+        let bytes = crate::serializer::hwpx::serialize_hwpx(&doc).expect("serialize");
+        let xml = extract_header_xml(&bytes);
+        assert!(xml.contains(r##"<hh:borderFills itemCnt="2">"##), "placeholder missing: {xml}");
+    }
+
+    #[test]
+    fn border_fill_roundtrip() {
+        let mut bf = BorderFill::default();
+        bf.borders[0] = BorderLine { line_type: BorderLineType::Solid, width: 2, color: 0x000000FF }; // 빨강
+        bf.fill.fill_type = FillType::Solid;
+        bf.fill.solid = Some(SolidFill { background_color: 0x00FF0000, pattern_color: 0xFFFFFFFF, ..Default::default() });
+
+        let mut doc = Document::default();
+        doc.doc_info.border_fills.push(bf);
+
+        let bytes = crate::serializer::hwpx::serialize_hwpx(&doc).expect("serialize");
+        let xml = extract_header_xml(&bytes);
+        let (parsed, _) = parse_hwpx_header(&xml).expect("parse header");
+
+        assert_eq!(parsed.border_fills.len(), 1);
+        let p = &parsed.border_fills[0];
+        assert_eq!(p.borders[0].line_type, BorderLineType::Solid);
+        // 색상 역매핑: 빨강 0x000000FF → #FF0000 → parse_color → 0x000000FF
+        assert_eq!(p.borders[0].color, 0x000000FF);
+        assert_eq!(p.fill.fill_type, FillType::Solid);
+        assert!(p.fill.solid.is_some());
+        assert_eq!(p.fill.solid.unwrap().background_color, 0x00FF0000);
+    }
+
+    #[test]
+    fn empty_tab_defs_emits_placeholder() {
+        let doc = Document::default();
+        let bytes = crate::serializer::hwpx::serialize_hwpx(&doc).expect("serialize");
+        let xml = extract_header_xml(&bytes);
+        assert!(xml.contains(r##"<hh:tabProperties itemCnt="1">"##), "tab placeholder missing");
+    }
+
+    #[test]
+    fn tab_def_auto_tab_roundtrip() {
+        let mut doc = Document::default();
+        doc.doc_info.tab_defs.push(TabDef { auto_tab_left: true, auto_tab_right: false, ..Default::default() });
+        doc.doc_info.tab_defs.push(TabDef { auto_tab_left: false, auto_tab_right: true, ..Default::default() });
+
+        let bytes = crate::serializer::hwpx::serialize_hwpx(&doc).expect("serialize");
+        let xml = extract_header_xml(&bytes);
+        let (parsed, _) = parse_hwpx_header(&xml).expect("parse header");
+
+        assert_eq!(parsed.tab_defs.len(), 2);
+        assert_eq!(parsed.tab_defs[0].auto_tab_left, true);
+        assert_eq!(parsed.tab_defs[0].auto_tab_right, false);
+        assert_eq!(parsed.tab_defs[1].auto_tab_left, false);
+        assert_eq!(parsed.tab_defs[1].auto_tab_right, true);
+    }
+
+    #[test]
+    fn tab_items_roundtrip() {
+        let mut td = TabDef::default();
+        td.tabs.push(TabItem { position: 2000, tab_type: 2, fill_type: 1 }); // CENTER, SOLID
+        let mut doc = Document::default();
+        doc.doc_info.tab_defs.push(td);
+
+        let bytes = crate::serializer::hwpx::serialize_hwpx(&doc).expect("serialize");
+        let xml = extract_header_xml(&bytes);
+        let (parsed, _) = parse_hwpx_header(&xml).expect("parse header");
+
+        assert_eq!(parsed.tab_defs[0].tabs.len(), 1);
+        // 직접 tabItem: 파서가 position 그대로 저장
+        assert_eq!(parsed.tab_defs[0].tabs[0].position, 2000);
+        assert_eq!(parsed.tab_defs[0].tabs[0].tab_type, 2); // CENTER
+        assert_eq!(parsed.tab_defs[0].tabs[0].fill_type, 1); // SOLID
+    }
+
+    #[test]
+    fn empty_para_shapes_emits_default_parappr() {
+        let doc = Document::default();
+        let bytes = crate::serializer::hwpx::serialize_hwpx(&doc).expect("serialize");
+        let xml = extract_header_xml(&bytes);
+        assert!(xml.contains(r##"<hh:paraProperties itemCnt="1">"##), "paraPr placeholder missing");
+    }
+
+    #[test]
+    fn para_shape_roundtrip() {
+        let ps = ParaShape {
+            tab_def_id: 1,
+            alignment: Alignment::Left,
+            margin_left: 3000,
+            margin_right: 0,
+            indent: -500,
+            spacing_before: 400,
+            spacing_after: 200,
+            line_spacing: 160,
+            line_spacing_type: LineSpacingType::Percent,
+            border_fill_id: 2,
+            ..Default::default()
+        };
+        let mut doc = Document::default();
+        doc.doc_info.para_shapes.push(ps);
+
+        let bytes = crate::serializer::hwpx::serialize_hwpx(&doc).expect("serialize");
+        let xml = extract_header_xml(&bytes);
+        let (parsed, _) = parse_hwpx_header(&xml).expect("parse header");
+
+        assert_eq!(parsed.para_shapes.len(), 1);
+        let p = &parsed.para_shapes[0];
+        assert_eq!(p.tab_def_id, 1);
+        assert_eq!(p.alignment, Alignment::Left);
+        assert_eq!(p.margin_left, 3000);
+        assert_eq!(p.indent, -500);
+        assert_eq!(p.spacing_before, 400);
+        assert_eq!(p.spacing_after, 200);
+        assert_eq!(p.line_spacing, 160);
+        assert_eq!(p.line_spacing_type, LineSpacingType::Percent);
         assert_eq!(p.border_fill_id, 2);
     }
 }
