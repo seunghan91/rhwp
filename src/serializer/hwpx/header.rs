@@ -1,12 +1,13 @@
 //! Contents/header.xml — DocInfo 리소스 테이블 직렬화
 //!
-//! Stage 1: fontfaces 동적 생성 + 나머지 섹션 최소 placeholder
-//! Stage 2+: charPr / paraPr / styles 등 순차적으로 동적 생성
+//! Stage 1: fontfaces 동적 생성
+//! Stage 2: charPr 동적 생성
+//! Stage 3+: paraPr / styles 등 순차적으로 동적 생성
 
 use crate::model::document::Document;
-use crate::model::style::Font;
+use crate::model::style::{CharShape, Font, UnderlineType};
 use super::SerializeError;
-use super::utils::xml_escape;
+use super::utils::{color_ref_to_hex, line_shape_to_str, xml_escape};
 
 const LANG_NAMES: [&str; 7] = ["HANGUL", "LATIN", "HANJA", "JAPANESE", "OTHER", "SYMBOL", "USER"];
 
@@ -51,18 +52,100 @@ fn border_fills_placeholder(out: &mut String) {
     out.push_str("</hh:borderFills>");
 }
 
-fn char_properties_placeholder(out: &mut String) {
-    out.push_str(r##"<hh:charProperties itemCnt="1">"##);
-    out.push_str(r##"<hh:charPr id="0" height="1000" textColor="#000000" shadeColor="none" useFontSpace="0" useKerning="0" symMark="NONE" borderFillIDRef="2">"##);
-    let zero7 = r##"hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0""##;
-    let one7  = r##"hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100""##;
-    out.push_str(&format!(r##"<hh:fontRef {zero7}/>"##));
-    out.push_str(&format!(r##"<hh:ratio {one7}/>"##));
-    out.push_str(&format!(r##"<hh:spacing {zero7}/>"##));
-    out.push_str(&format!(r##"<hh:relSz {one7}/>"##));
-    out.push_str(&format!(r##"<hh:offset {zero7}/>"##));
-    out.push_str("</hh:charPr>");
+fn write_char_properties(out: &mut String, char_shapes: &[CharShape]) {
+    // char_shapes가 비어 있으면 최소 1개(기본값) 출력 — section.xml의 charPrIDRef="0" 참조 보호
+    if char_shapes.is_empty() {
+        out.push_str(r##"<hh:charProperties itemCnt="1">"##);
+        write_single_char_pr(out, 0, &CharShape::default());
+        out.push_str("</hh:charProperties>");
+        return;
+    }
+    out.push_str(&format!(r##"<hh:charProperties itemCnt="{}">"##, char_shapes.len()));
+    for (i, cs) in char_shapes.iter().enumerate() {
+        write_single_char_pr(out, i, cs);
+    }
     out.push_str("</hh:charProperties>");
+}
+
+fn write_single_char_pr(out: &mut String, id: usize, cs: &CharShape) {
+    let text_color = color_ref_to_hex(cs.text_color);
+    let shade_color = color_ref_to_hex(cs.shade_color);
+    out.push_str(&format!(
+        r##"<hh:charPr id="{id}" height="{}" textColor="{text_color}" shadeColor="{shade_color}" useFontSpace="0" useKerning="{}" symMark="NONE" borderFillIDRef="{}">"##,
+        cs.base_size,
+        if cs.kerning { 1 } else { 0 },
+        cs.border_fill_id,
+    ));
+    out.push_str(&lang7_attr("hh:fontRef", &cs.font_ids));
+    out.push_str(&lang7_attr_u8("hh:ratio", &cs.ratios));
+    out.push_str(&lang7_attr_i8("hh:spacing", &cs.spacings));
+    out.push_str(&lang7_attr_u8("hh:relSz", &cs.relative_sizes));
+    out.push_str(&lang7_attr_i8("hh:offset", &cs.char_offsets));
+
+    if cs.bold    { out.push_str("<hh:bold/>"); }
+    if cs.italic  { out.push_str("<hh:italic/>"); }
+
+    if cs.underline_type != UnderlineType::None {
+        let utype = match cs.underline_type {
+            UnderlineType::Bottom => "BOTTOM",
+            UnderlineType::Top    => "TOP",
+            UnderlineType::None   => unreachable!(),
+        };
+        let ushape = line_shape_to_str(cs.underline_shape);
+        let ucolor = color_ref_to_hex(cs.underline_color);
+        out.push_str(&format!(
+            r##"<hh:underline type="{utype}" shape="{ushape}" color="{ucolor}"/>"##
+        ));
+    }
+
+    if cs.strikethrough {
+        let sshape = line_shape_to_str(cs.strike_shape);
+        let scolor = color_ref_to_hex(cs.strike_color);
+        out.push_str(&format!(
+            r##"<hh:strikeout shape="{sshape}" color="{scolor}"/>"##
+        ));
+    }
+
+    if cs.outline_type != 0 {
+        let otype = match cs.outline_type {
+            1 => "SOLID", 2 => "DASH", 3 => "DOT", _ => "NONE",
+        };
+        out.push_str(&format!(r##"<hh:outline type="{otype}"/>"##));
+    }
+
+    if cs.shadow_type != 0 {
+        let stype = "DROP";
+        let scolor = color_ref_to_hex(cs.shadow_color);
+        out.push_str(&format!(r##"<hh:shadow type="{stype}" color="{scolor}"/>"##));
+    }
+
+    if cs.emboss     { out.push_str("<hh:emboss/>"); }
+    if cs.engrave    { out.push_str("<hh:engrave/>"); }
+    if cs.superscript { out.push_str("<hh:supscript/>"); }
+    if cs.subscript  { out.push_str("<hh:subscript/>"); }
+
+    out.push_str("</hh:charPr>");
+}
+
+fn lang7_attr(tag: &str, vals: &[u16; 7]) -> String {
+    format!(
+        r##"<{tag} hangul="{}" latin="{}" hanja="{}" japanese="{}" other="{}" symbol="{}" user="{}"/>"##,
+        vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], vals[6]
+    )
+}
+
+fn lang7_attr_u8(tag: &str, vals: &[u8; 7]) -> String {
+    format!(
+        r##"<{tag} hangul="{}" latin="{}" hanja="{}" japanese="{}" other="{}" symbol="{}" user="{}"/>"##,
+        vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], vals[6]
+    )
+}
+
+fn lang7_attr_i8(tag: &str, vals: &[i8; 7]) -> String {
+    format!(
+        r##"<{tag} hangul="{}" latin="{}" hanja="{}" japanese="{}" other="{}" symbol="{}" user="{}"/>"##,
+        vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], vals[6]
+    )
 }
 
 fn tab_properties_placeholder(out: &mut String) {
@@ -100,7 +183,7 @@ pub fn write_header(doc: &Document) -> Result<Vec<u8>, SerializeError> {
     out.push_str("<hh:refList>");
     write_fontfaces(&mut out, &doc.doc_info.font_faces);
     border_fills_placeholder(&mut out);
-    char_properties_placeholder(&mut out);
+    write_char_properties(&mut out, &doc.doc_info.char_shapes);
     tab_properties_placeholder(&mut out);
     out.push_str(r##"<hh:numberings itemCnt="0"/>"##);
     para_properties_placeholder(&mut out);
@@ -140,7 +223,7 @@ fn write_fontfaces(out: &mut String, font_faces: &[Vec<Font>]) {
 mod tests {
     use super::*;
     use crate::model::document::Document;
-    use crate::model::style::Font;
+    use crate::model::style::{CharShape, Font, UnderlineType};
     use crate::parser::hwpx::header::parse_hwpx_header;
 
     fn extract_header_xml(bytes: &[u8]) -> String {
@@ -206,9 +289,99 @@ mod tests {
         assert_eq!(parsed_info.font_faces[0][0].name, "함초롬돋움");
         assert_eq!(parsed_info.font_faces[1].len(), 1);
         assert_eq!(parsed_info.font_faces[1][0].name, "Times New Roman");
-        // 나머지 5개 그룹은 빈 목록
         for i in 2..7 {
             assert!(parsed_info.font_faces[i].is_empty(), "group {i} should be empty");
         }
+    }
+
+    // ─── Stage 2: charPr ───
+
+    fn make_charpr_doc(cs: CharShape) -> Document {
+        let mut doc = Document::default();
+        doc.doc_info.char_shapes.push(cs);
+        doc
+    }
+
+    #[test]
+    fn empty_charshapes_emits_default_charpr() {
+        let doc = Document::default();
+        let bytes = crate::serializer::hwpx::serialize_hwpx(&doc).expect("serialize");
+        let xml = extract_header_xml(&bytes);
+        assert!(xml.contains(r##"<hh:charProperties itemCnt="1">"##), "default charPr missing: {xml}");
+        assert!(xml.contains(r##"id="0""##));
+    }
+
+    #[test]
+    fn charpr_bold_italic_emitted() {
+        let cs = CharShape { bold: true, italic: true, base_size: 1000, ..Default::default() };
+        let bytes = crate::serializer::hwpx::serialize_hwpx(&make_charpr_doc(cs)).expect("serialize");
+        let xml = extract_header_xml(&bytes);
+        assert!(xml.contains("<hh:bold/>"), "bold missing");
+        assert!(xml.contains("<hh:italic/>"), "italic missing");
+    }
+
+    #[test]
+    fn charpr_no_bold_italic_when_false() {
+        let cs = CharShape { bold: false, italic: false, ..Default::default() };
+        let bytes = crate::serializer::hwpx::serialize_hwpx(&make_charpr_doc(cs)).expect("serialize");
+        let xml = extract_header_xml(&bytes);
+        assert!(!xml.contains("<hh:bold/>"), "bold should not appear");
+        assert!(!xml.contains("<hh:italic/>"), "italic should not appear");
+    }
+
+    #[test]
+    fn charpr_underline_bottom_emitted() {
+        let cs = CharShape {
+            underline_type: UnderlineType::Bottom,
+            underline_shape: 0,
+            underline_color: 0x00000000,
+            ..Default::default()
+        };
+        let bytes = crate::serializer::hwpx::serialize_hwpx(&make_charpr_doc(cs)).expect("serialize");
+        let xml = extract_header_xml(&bytes);
+        assert!(xml.contains(r##"type="BOTTOM""##), "underline BOTTOM missing: {xml}");
+        assert!(xml.contains(r##"shape="SOLID""##), "shape missing");
+    }
+
+    #[test]
+    fn charpr_strikeout_emitted() {
+        let cs = CharShape { strikethrough: true, strike_shape: 0, strike_color: 0, ..Default::default() };
+        let bytes = crate::serializer::hwpx::serialize_hwpx(&make_charpr_doc(cs)).expect("serialize");
+        let xml = extract_header_xml(&bytes);
+        assert!(xml.contains("<hh:strikeout "), "strikeout missing: {xml}");
+    }
+
+    #[test]
+    fn charpr_roundtrip() {
+        let cs = CharShape {
+            base_size: 1200,
+            bold: true,
+            font_ids: [1, 2, 0, 0, 0, 0, 0],
+            ratios: [100, 90, 100, 100, 100, 100, 100],
+            spacings: [0, -5, 0, 0, 0, 0, 0],
+            relative_sizes: [100; 7],
+            char_offsets: [0; 7],
+            text_color: 0x000000FF, // 빨강 (#FF0000)
+            shade_color: 0xFFFFFFFF,
+            border_fill_id: 2,
+            ..Default::default()
+        };
+        let mut doc = Document::default();
+        doc.doc_info.char_shapes.push(cs.clone());
+
+        let bytes = crate::serializer::hwpx::serialize_hwpx(&doc).expect("serialize");
+        let xml = extract_header_xml(&bytes);
+        let (parsed, _) = parse_hwpx_header(&xml).expect("parse header");
+
+        assert_eq!(parsed.char_shapes.len(), 1);
+        let p = &parsed.char_shapes[0];
+        assert_eq!(p.base_size, 1200);
+        assert_eq!(p.bold, true);
+        assert_eq!(p.font_ids, [1, 2, 0, 0, 0, 0, 0]);
+        assert_eq!(p.ratios, [100, 90, 100, 100, 100, 100, 100]);
+        assert_eq!(p.spacings, [0, -5, 0, 0, 0, 0, 0]);
+        assert_eq!(p.text_color, 0x000000FF);
+        assert_eq!(p.shade_color, 0xFFFFFFFF);
+        assert_eq!(p.border_fill_id, 2);
     }
 }
