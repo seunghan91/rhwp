@@ -21,8 +21,8 @@ const PARA_CLOSE: &str = "</hp:p></hs:sec>";
 const VERT_STEP: u32 = 1600; // vertsize(1000) + spacing(600)
 const LINE_FLAGS: u32 = 393216;
 const HORZ_SIZE: u32 = 42520;
-/// 탭 기본 폭 (한컴이 열면서 재계산하지만 초기값으로 필요).
-const TAB_DEFAULT_WIDTH: u32 = 4000;
+/// 탭 기본 폭 — SectionDef.default_tab_spacing 이 0이면 사용하는 폴백 값.
+const TAB_FALLBACK_WIDTH: u32 = 8000;
 
 pub fn write_section(
     section: &Section,
@@ -30,11 +30,15 @@ pub fn write_section(
     _index: usize,
 ) -> Result<Vec<u8>, SerializeError> {
     let mut vert_cursor: u32 = 0;
+    let tab_width = {
+        let s = section.section_def.default_tab_spacing;
+        if s > 0 { s as u32 } else { TAB_FALLBACK_WIDTH }
+    };
 
     // 첫 문단: 템플릿의 `<hp:t/>` 와 `<hp:linesegarray>` 영역을 치환.
     let first_para = section.paragraphs.first();
     let first_text = first_para.map(|p| p.text.as_str()).unwrap_or("");
-    let (first_t, first_linesegs, first_advance) = render_paragraph_parts(first_text, vert_cursor);
+    let (first_t, first_linesegs, first_advance) = render_paragraph_parts(first_text, vert_cursor, tab_width);
     vert_cursor = first_advance;
 
     let mut out = EMPTY_SECTION_XML.replacen(TEXT_SLOT, &first_t, 1);
@@ -65,7 +69,7 @@ pub fn write_section(
     if section.paragraphs.len() > 1 {
         let mut extra = String::new();
         for p in &section.paragraphs[1..] {
-            let (t, linesegs, advance) = render_paragraph_parts(&p.text, vert_cursor);
+            let (t, linesegs, advance) = render_paragraph_parts(&p.text, vert_cursor, tab_width);
             vert_cursor = advance;
             let char_id = p.char_shapes.first().map(|r| r.char_shape_id).unwrap_or(0);
             extra.push_str(&format!(
@@ -84,7 +88,7 @@ pub fn write_section(
 }
 
 /// 문단 텍스트 하나를 (`<hp:t>` XML, lineseg XML, 다음 vert_cursor)로 변환.
-fn render_paragraph_parts(text: &str, vert_start: u32) -> (String, String, u32) {
+fn render_paragraph_parts(text: &str, vert_start: u32, tab_width: u32) -> (String, String, u32) {
     let mut t_xml = String::from("<hp:t>");
     let mut linesegs = String::new();
     push_lineseg(&mut linesegs, 0, vert_start);
@@ -100,7 +104,7 @@ fn render_paragraph_parts(text: &str, vert_start: u32) -> (String, String, u32) 
                 flush_buf(&mut t_xml, &mut buf);
                 t_xml.push_str(&format!(
                     r#"<hp:tab width="{}" leader="0" type="1"/>"#,
-                    TAB_DEFAULT_WIDTH
+                    tab_width
                 ));
                 utf16_pos += u16_len;
             }

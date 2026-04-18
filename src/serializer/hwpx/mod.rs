@@ -147,7 +147,7 @@ mod tests {
         std::io::Read::read_to_string(&mut sec0, &mut xml).expect("read");
         // Stage 2.3 (ref_mixed 기반): 혼합 콘텐츠 + tab 속성 포함
         assert!(
-            xml.contains(r#"<hp:t>A<hp:tab width="4000" leader="0" type="1"/>B<hp:lineBreak/>C</hp:t>"#),
+            xml.contains(r#"<hp:t>A<hp:tab width="8000" leader="0" type="1"/>B<hp:lineBreak/>C</hp:t>"#),
             "mixed content not rendered: {}", xml
         );
     }
