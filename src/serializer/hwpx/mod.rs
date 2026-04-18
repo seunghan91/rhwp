@@ -265,4 +265,69 @@ mod tests {
             );
         }
     }
+
+    // ─── Stage 1/#186: pagePr 동적화 ───
+
+    fn extract_section0_xml(bytes: &[u8]) -> String {
+        let cursor = std::io::Cursor::new(bytes);
+        let mut archive = zip::ZipArchive::new(cursor).expect("valid zip");
+        let mut entry = archive.by_name("Contents/section0.xml").expect("section0");
+        let mut xml = String::new();
+        std::io::Read::read_to_string(&mut entry, &mut xml).expect("read");
+        xml
+    }
+
+    fn make_section_doc(pd: crate::model::page::PageDef) -> Document {
+        let mut doc = Document::default();
+        let mut sec = crate::model::document::Section::default();
+        sec.section_def.page_def = pd;
+        let mut para = crate::model::paragraph::Paragraph::default();
+        para.text = "test".to_string();
+        sec.paragraphs.push(para);
+        doc.sections.push(sec);
+        doc
+    }
+
+    #[test]
+    fn pagePr_dynamic_width_height() {
+        use crate::model::page::PageDef;
+        let mut pd = PageDef::default();
+        pd.width = 42000;
+        pd.height = 59528;
+        pd.landscape = true;
+        let bytes = serialize_hwpx(&make_section_doc(pd)).expect("serialize");
+        let xml = extract_section0_xml(&bytes);
+        assert!(xml.contains(r#"width="42000""#), "width missing: {xml}");
+        assert!(xml.contains(r#"height="59528""#), "height missing");
+        assert!(xml.contains(r#"landscape="WIDELY""#), "landscape WIDELY missing");
+    }
+
+    #[test]
+    fn pagePr_margins_dynamic() {
+        use crate::model::page::PageDef;
+        let pd = PageDef {
+            width: 59528, height: 84186,
+            margin_left: 9000, margin_right: 9000,
+            margin_top: 6000, margin_bottom: 5000,
+            margin_header: 4000, margin_footer: 4000,
+            margin_gutter: 1000,
+            landscape: true,
+            ..Default::default()
+        };
+        let bytes = serialize_hwpx(&make_section_doc(pd)).expect("serialize");
+        let xml = extract_section0_xml(&bytes);
+        assert!(xml.contains(r#"left="9000" right="9000""#), "lr missing: {xml}");
+        assert!(xml.contains(r#"top="6000" bottom="5000""#), "tb missing");
+        assert!(xml.contains(r#"header="4000" footer="4000""#), "header missing");
+        assert!(xml.contains(r#"gutter="1000""#), "gutter missing");
+    }
+
+    #[test]
+    fn pagePr_landscape_narrow() {
+        use crate::model::page::PageDef;
+        let pd = PageDef { landscape: false, width: 59528, height: 84186, ..Default::default() };
+        let bytes = serialize_hwpx(&make_section_doc(pd)).expect("serialize");
+        let xml = extract_section0_xml(&bytes);
+        assert!(xml.contains(r#"landscape="NARROW""#), "NARROW missing: {xml}");
+    }
 }

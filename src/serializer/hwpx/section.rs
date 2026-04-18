@@ -1,6 +1,7 @@
 //! Contents/section{N}.xml — Section 본문 직렬화
 //!
 //! Stage 2.3: 다문단 + 소프트 라인브레이크 + 탭 (한컴 레퍼런스 ref_mixed.hwpx 기반)
+//! Stage 1/#186: secPr/pagePr 동적화
 //!
 //! IR 매핑 관행:
 //!   - `section.paragraphs` 여러 개 = 하드 문단 경계 (`<hp:p>` 여러 개)
@@ -8,6 +9,7 @@
 //!   - `paragraph.text` 내 `\t` = 탭 (`<hp:tab width=... leader="0" type="1"/>`)
 
 use crate::model::document::{Document, Section};
+use crate::model::page::{BindingMethod, PageDef};
 use super::utils::xml_escape;
 use super::SerializeError;
 
@@ -44,6 +46,16 @@ pub fn write_section(
 
     let mut out = EMPTY_SECTION_XML.replacen(TEXT_SLOT, &first_t, 1);
     out = replace_first_linesegs(&out, &first_linesegs);
+
+    // secPr pagePr 동적화
+    substitute_page_def(&mut out, &section.section_def.page_def);
+    if section.section_def.default_tab_spacing > 0 {
+        out = out.replacen(
+            r#"tabStop="8000""#,
+            &format!(r#"tabStop="{}""#, section.section_def.default_tab_spacing),
+            1,
+        );
+    }
 
     // 첫 문단 ID 동적 연동
     if let Some(p) = first_para {
@@ -151,6 +163,64 @@ fn push_lineseg(out: &mut String, textpos: u32, vertpos: u32) {
         r#"<hp:lineseg textpos="{}" vertpos="{}" vertsize="1000" textheight="1000" baseline="850" spacing="600" horzpos="0" horzsize="{}" flags="{}"/>"#,
         textpos, vertpos, HORZ_SIZE, LINE_FLAGS,
     ));
+}
+
+/// SectionDef.page_def 값으로 템플릿의 pagePr 고정값을 치환한다.
+/// 각 패턴은 템플릿 내 고유하므로 replacen(…, 1) 사용.
+/// page_def 필드가 0이면 템플릿 기본값 유지.
+fn substitute_page_def(out: &mut String, pd: &PageDef) {
+    if pd.landscape {
+        // 기본값이 이미 WIDELY이므로 false(NARROW)일 때만 치환
+    } else {
+        *out = out.replacen(r#"landscape="WIDELY""#, r#"landscape="NARROW""#, 1);
+    }
+
+    let gutter_type = match pd.binding {
+        BindingMethod::TopFlip => "TOP_ONLY",
+        _ => "LEFT_ONLY",
+    };
+    if gutter_type != "LEFT_ONLY" {
+        *out = out.replacen(
+            r#"gutterType="LEFT_ONLY""#,
+            &format!(r#"gutterType="{gutter_type}""#),
+            1,
+        );
+    }
+
+    if pd.width > 0 {
+        *out = out.replacen(r#"width="59528""#, &format!(r#"width="{}""#, pd.width), 1);
+    }
+    if pd.height > 0 {
+        *out = out.replacen(r#"height="84186""#, &format!(r#"height="{}""#, pd.height), 1);
+    }
+    if pd.margin_header > 0 {
+        *out = out.replacen(
+            r#"header="4252" footer="4252""#,
+            &format!(r#"header="{}" footer="{}""#, pd.margin_header, pd.margin_footer),
+            1,
+        );
+    }
+    if pd.margin_gutter != 0 {
+        *out = out.replacen(
+            r#"gutter="0""#,
+            &format!(r#"gutter="{}""#, pd.margin_gutter),
+            1,
+        );
+    }
+    if pd.margin_left > 0 {
+        *out = out.replacen(
+            r#"left="8504" right="8504""#,
+            &format!(r#"left="{}" right="{}""#, pd.margin_left, pd.margin_right),
+            1,
+        );
+    }
+    if pd.margin_top > 0 {
+        *out = out.replacen(
+            r#"top="5668" bottom="4252""#,
+            &format!(r#"top="{}" bottom="{}""#, pd.margin_top, pd.margin_bottom),
+            1,
+        );
+    }
 }
 
 fn replace_first_linesegs(xml: &str, new_inner: &str) -> String {
