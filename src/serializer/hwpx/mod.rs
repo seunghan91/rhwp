@@ -9,8 +9,10 @@
 
 pub mod content;
 pub mod header;
+pub mod picture;
 pub mod section;
 pub mod static_assets;
+pub mod table;
 pub mod utils;
 pub mod writer;
 
@@ -57,21 +59,85 @@ pub fn serialize_hwpx(doc: &Document) -> Result<Vec<u8>, SerializeError> {
     // 7. META-INF/container.rdf
     z.write_deflated("META-INF/container.rdf", META_INF_CONTAINER_RDF.as_bytes())?;
 
-    // 8. Contents/content.hpf — 정확히 1섹션 + BinData 없는 빈 문서일 때는 레퍼런스 템플릿
-    if doc.sections.len() == 1 && doc.bin_data_content.is_empty() {
+    // 8. BinData ZIP 엔트리 수집 + 저장
+    let bin_entries = collect_bin_data(doc, &mut z)?;
+
+    // 9. Contents/content.hpf — BinData 없고 섹션 1개이면 템플릿 사용
+    if doc.sections.len() == 1 && bin_entries.is_empty() {
         z.write_deflated("Contents/content.hpf", EMPTY_CONTENT_HPF.as_bytes())?;
     } else {
-        let content_hpf = content::write_content_hpf(&section_hrefs, &[])?;
+        let content_hpf = content::write_content_hpf(&section_hrefs, &bin_entries)?;
         z.write_deflated("Contents/content.hpf", &content_hpf)?;
     }
 
-    // 9. META-INF/container.xml
+    // 10. META-INF/container.xml
     z.write_deflated("META-INF/container.xml", META_INF_CONTAINER_XML.as_bytes())?;
 
-    // 10. META-INF/manifest.xml
+    // 11. META-INF/manifest.xml
     z.write_deflated("META-INF/manifest.xml", META_INF_MANIFEST_XML.as_bytes())?;
 
     z.finish()
+}
+
+/// 문서 전체를 순회하며 Picture 컨트롤을 찾아 BinData ZIP 엔트리를 기록하고
+/// content.hpf manifest용 BinDataEntry 목록을 반환한다.
+fn collect_bin_data(
+    doc: &Document,
+    z: &mut writer::HwpxZipWriter,
+) -> Result<Vec<content::BinDataEntry>, SerializeError> {
+    use crate::model::control::Control;
+
+    let mut entries: Vec<content::BinDataEntry> = Vec::new();
+    let mut written_ids: std::collections::HashSet<u16> = std::collections::HashSet::new();
+
+    for sec in &doc.sections {
+        collect_bin_data_in_paras(&sec.paragraphs, doc, z, &mut entries, &mut written_ids)?;
+    }
+    Ok(entries)
+}
+
+fn collect_bin_data_in_paras(
+    paras: &[crate::model::paragraph::Paragraph],
+    doc: &Document,
+    z: &mut writer::HwpxZipWriter,
+    entries: &mut Vec<content::BinDataEntry>,
+    written_ids: &mut std::collections::HashSet<u16>,
+) -> Result<(), SerializeError> {
+    use crate::model::control::Control;
+
+    for para in paras {
+        for ctrl in &para.controls {
+            match ctrl {
+                Control::Picture(pic) => {
+                    let id = pic.image_attr.bin_data_id;
+                    if id > 0 && written_ids.insert(id) {
+                        // BinDataContent에서 실제 데이터 탐색
+                        if let Some(bc) = doc.bin_data_content.iter().find(|b| b.id == id) {
+                            let ext = &bc.extension;
+                            let path = picture::bin_data_path(id, ext);
+                            let mime = picture::media_type(ext);
+                            z.write_deflated(&path, &bc.data)?;
+                            entries.push(content::BinDataEntry {
+                                id: format!("image{}", id),
+                                href: path,
+                                media_type: mime.to_string(),
+                            });
+                        }
+                    }
+                }
+                Control::Table(tbl) => {
+                    // 셀 내 문단 재귀 처리
+                    for cell in &tbl.cells {
+                        collect_bin_data_in_paras(
+                            &cell.paragraphs, doc, z, entries, written_ids,
+                        )?;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -264,5 +330,495 @@ mod tests {
                 r
             );
         }
+    }
+
+    // ─── Stage 5/#186: 통합 검증 ───
+
+    #[test]
+    #[ignore]
+    fn inspect_large_file_structure() {
+        let src = "samples/hwpx/2024년 1분기 해외직접투자 보도자료 ff.hwpx";
+        let bytes = std::fs::read(src).expect("file");
+        let doc = crate::parser::hwpx::parse_hwpx(&bytes).expect("parse");
+        eprintln!("sections: {}", doc.sections.len());
+        let rt = serialize_hwpx(&doc).expect("serialize");
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(rt.clone())).unwrap();
+        let names: Vec<_> = archive.file_names().map(|s| s.to_string()).collect();
+        eprintln!("rt zip files: {:?}", names);
+        let hpf = {
+            let mut f = archive.by_name("Contents/content.hpf").unwrap();
+            let mut s = String::new();
+            std::io::Read::read_to_string(&mut f, &mut s).unwrap();
+            s
+        };
+        for line in hpf.split("<opf:item") {
+            if line.contains("section") { eprintln!("item: {}", &line[..line.find('>').unwrap_or(line.len())+1]); }
+        }
+        // Compare header.xml sizes
+        let mut orig_archive = zip::ZipArchive::new(std::io::Cursor::new(
+            std::fs::read("samples/hwpx/2024년 1분기 해외직접투자 보도자료 ff.hwpx").unwrap()
+        )).unwrap();
+        let orig_hdr = { let mut f = orig_archive.by_name("Contents/header.xml").unwrap(); let mut s = String::new(); std::io::Read::read_to_string(&mut f, &mut s).unwrap(); s };
+        let rt_hdr = { let mut f = archive.by_name("Contents/header.xml").unwrap(); let mut s = String::new(); std::io::Read::read_to_string(&mut f, &mut s).unwrap(); s };
+        eprintln!("header.xml: orig={} rt={}", orig_hdr.len(), rt_hdr.len());
+        // font count
+        for tag in ["fontface", "charPr ", "paraPr ", "borderFill ", "style ", "numbering ", "tabDef ", "listLevel", "trackChange", "masterPage"] {
+            eprintln!("  {tag}: orig={} rt={}", orig_hdr.matches(tag).count(), rt_hdr.matches(tag).count());
+        }
+        // Compare section0 sizes
+        let orig_s0 = { let mut f = orig_archive.by_name("Contents/section0.xml").unwrap(); let mut s = String::new(); std::io::Read::read_to_string(&mut f, &mut s).unwrap(); s };
+        let rt_s0 = { let mut f = archive.by_name("Contents/section0.xml").unwrap(); let mut s = String::new(); std::io::Read::read_to_string(&mut f, &mut s).unwrap(); s };
+        eprintln!("section0.xml: orig={} rt={}", orig_s0.len(), rt_s0.len());
+        eprintln!("  orig hp:tbl: {} rt hp:tbl: {}", orig_s0.matches("<hp:tbl").count(), rt_s0.matches("<hp:tbl").count());
+        eprintln!("  orig hp:pic: {} rt hp:pic: {}", orig_s0.matches("<hp:pic").count(), rt_s0.matches("<hp:pic").count());
+        eprintln!("  orig hp:run: {} rt hp:run: {}", orig_s0.matches("<hp:run").count(), rt_s0.matches("<hp:run").count());
+        // Check section1
+        if let (Ok(mut of), Ok(mut rf)) = (orig_archive.by_name("Contents/section1.xml"), archive.by_name("Contents/section1.xml")) {
+            let (mut os, mut rs) = (String::new(), String::new());
+            std::io::Read::read_to_string(&mut of, &mut os).unwrap();
+            std::io::Read::read_to_string(&mut rf, &mut rs).unwrap();
+            eprintln!("section1.xml: orig={} rt={}", os.len(), rs.len());
+            eprintln!("  s1 orig hp:pic: {} rt hp:pic: {}", os.matches("<hp:pic").count(), rs.matches("<hp:pic").count());
+        }
+        // Count pictures in IR (including table cells)
+        use crate::model::control::Control;
+        fn count_pics_in_paras(paras: &[crate::model::paragraph::Paragraph]) -> u32 {
+            let mut n = 0u32;
+            for p in paras {
+                for c in &p.controls {
+                    match c {
+                        Control::Picture(_) => n += 1,
+                        Control::Table(tbl) => {
+                            for cell in &tbl.cells {
+                                n += count_pics_in_paras(&cell.paragraphs);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            n
+        }
+        for (si, sec) in doc.sections.iter().enumerate() {
+            eprintln!("  IR section{si}: {} pictures (incl. cells)", count_pics_in_paras(&sec.paragraphs));
+        }
+
+        // Re-parse rt file
+        let rt_doc2 = crate::parser::hwpx::parse_hwpx(&rt).expect("re-parse");
+        eprintln!("rt re-parse: {} sections, s0 {} paras", rt_doc2.sections.len(), rt_doc2.sections[0].paragraphs.len());
+
+        // Validate section XMLs
+        for sec_name in ["Contents/section0.xml", "Contents/section1.xml"] {
+            let xml = {
+                let mut f = archive.by_name(sec_name).unwrap();
+                let mut s = String::new();
+                std::io::Read::read_to_string(&mut f, &mut s).unwrap();
+                s
+            };
+            eprintln!("{sec_name} len={}", xml.len());
+            // Check for unmatched tags (crude: count opens/closes of hp:p)
+            let opens = xml.matches("<hp:p ").count();
+            let closes = xml.matches("</hp:p>").count();
+            eprintln!("  hp:p open={opens} close={closes}");
+            // Show first parse error via quick-xml
+            let mut reader = quick_xml::Reader::from_str(&xml);
+            reader.config_mut().check_end_names = true;
+            let mut buf = Vec::new();
+            let mut depth = 0u32;
+            let mut err = None;
+            loop {
+                match reader.read_event_into(&mut buf) {
+                    Ok(quick_xml::events::Event::Start(_)) => depth += 1,
+                    Ok(quick_xml::events::Event::End(_)) => { if depth > 0 { depth -= 1; } },
+                    Ok(quick_xml::events::Event::Eof) => break,
+                    Err(e) => { err = Some(format!("{e:?} at pos {}", reader.buffer_position())); break; },
+                    _ => {}
+                }
+                buf.clear();
+            }
+            if let Some(e) = err { eprintln!("  XML ERROR: {e}"); } else { eprintln!("  XML valid, depth={depth}"); }
+        }
+    }
+
+    #[test]
+    fn save_roundtrip_files_to_output() {
+        let out_dir = "output/roundtrip";
+        std::fs::create_dir_all(out_dir).unwrap();
+        let samples = [
+            "samples/hwpx/ref/ref_text.hwpx",
+            "samples/hwpx/ref/ref_table.hwpx",
+            "samples/hwpx/ref/ref_mixed.hwpx",
+            "samples/hwpx/2024년 1분기 해외직접투자 보도자료 ff.hwpx",
+            "samples/hwpx/form-002.hwpx",
+        ];
+        for src in &samples {
+            let Ok(bytes) = std::fs::read(src) else {
+                eprintln!("skip (not found): {src}");
+                continue;
+            };
+            let Ok(doc) = crate::parser::hwpx::parse_hwpx(&bytes) else {
+                eprintln!("skip (parse fail): {src}");
+                continue;
+            };
+            let Ok(rt) = serialize_hwpx(&doc) else {
+                eprintln!("skip (serialize fail): {src}");
+                continue;
+            };
+            let fname = std::path::Path::new(src).file_name().unwrap().to_str().unwrap();
+            let out = format!("{out_dir}/rt_{fname}");
+            std::fs::write(&out, &rt).unwrap();
+            eprintln!("saved: {out} ({} bytes)", rt.len());
+        }
+    }
+
+    #[test]
+    fn ref_table_roundtrip() {
+        let bytes = std::fs::read("samples/hwpx/ref/ref_table.hwpx").expect("ref_table.hwpx");
+        let doc = crate::parser::hwpx::parse_hwpx(&bytes).expect("parse ref_table");
+        let orig_tbl = doc.sections[0].paragraphs.iter()
+            .flat_map(|p| p.controls.iter())
+            .find_map(|c| if let crate::model::control::Control::Table(t) = c { Some(t.as_ref()) } else { None })
+            .expect("no table in ref_table.hwpx");
+
+        let rt_bytes = serialize_hwpx(&doc).expect("serialize");
+        let rt_doc = crate::parser::hwpx::parse_hwpx(&rt_bytes).expect("parse rt");
+        let rt_tbl = rt_doc.sections[0].paragraphs.iter()
+            .flat_map(|p| p.controls.iter())
+            .find_map(|c| if let crate::model::control::Control::Table(t) = c { Some(t.as_ref()) } else { None })
+            .expect("no table in rt");
+        assert_eq!(rt_tbl.row_count, orig_tbl.row_count, "row_count");
+        assert_eq!(rt_tbl.col_count, orig_tbl.col_count, "col_count");
+        assert_eq!(rt_tbl.cells.len(), orig_tbl.cells.len(), "cell count");
+        assert_eq!(rt_tbl.border_fill_id, orig_tbl.border_fill_id, "borderFillIDRef");
+    }
+
+    #[test]
+    fn ref_mixed_roundtrip() {
+        let bytes = std::fs::read("samples/hwpx/ref/ref_mixed.hwpx").expect("ref_mixed.hwpx");
+        let doc = crate::parser::hwpx::parse_hwpx(&bytes).expect("parse ref_mixed");
+        let orig_sec = &doc.sections[0];
+
+        let rt_bytes = serialize_hwpx(&doc).expect("serialize");
+        let rt_doc = crate::parser::hwpx::parse_hwpx(&rt_bytes).expect("parse rt");
+        let rt_sec = &rt_doc.sections[0];
+        assert_eq!(rt_sec.paragraphs.len(), orig_sec.paragraphs.len(), "paragraph count");
+        for (i, (orig, rt)) in orig_sec.paragraphs.iter().zip(rt_sec.paragraphs.iter()).enumerate() {
+            assert_eq!(rt.text, orig.text, "para[{i}] text");
+        }
+    }
+
+    #[test]
+    fn ref_text_roundtrip() {
+        let bytes = std::fs::read("samples/hwpx/ref/ref_text.hwpx").expect("ref_text.hwpx");
+        let doc = crate::parser::hwpx::parse_hwpx(&bytes).expect("parse ref_text");
+        let rt_bytes = serialize_hwpx(&doc).expect("serialize");
+        let rt_doc = crate::parser::hwpx::parse_hwpx(&rt_bytes).expect("parse rt");
+        assert_eq!(rt_doc.sections.len(), doc.sections.len(), "section count");
+        for (i, (orig, rt)) in doc.sections[0].paragraphs.iter().zip(rt_doc.sections[0].paragraphs.iter()).enumerate() {
+            assert_eq!(rt.text, orig.text, "para[{i}] text");
+        }
+    }
+
+    // ─── Stage 4/#186: 그림 직렬화 + BinData ───
+
+    fn make_picture_doc(bin_data_id: u16, ext: &str, data: Vec<u8>, width: u32, height: u32) -> Document {
+        use crate::model::image::{Picture, ImageAttr};
+        use crate::model::control::Control;
+        use crate::model::bin_data::BinDataContent;
+        let mut doc = Document::default();
+
+        // BinDataContent 등록
+        doc.bin_data_content.push(BinDataContent {
+            id: bin_data_id,
+            data,
+            extension: ext.to_string(),
+        });
+
+        let mut sec = crate::model::document::Section::default();
+        let mut para = crate::model::paragraph::Paragraph::default();
+        let mut pic = Picture::default();
+        pic.common.width = width;
+        pic.common.height = height;
+        pic.image_attr = ImageAttr { bin_data_id, ..Default::default() };
+        para.text = "\u{0002}".to_string();
+        para.controls.push(Control::Picture(Box::new(pic)));
+        sec.paragraphs.push(para);
+        doc.sections.push(sec);
+        doc
+    }
+
+    #[test]
+    fn picture_bindata_entry_generated() {
+        let png_bytes = vec![0x89u8, 0x50, 0x4e, 0x47]; // PNG magic
+        let doc = make_picture_doc(1, "png", png_bytes, 5000, 3000);
+        let bytes = serialize_hwpx(&doc).expect("serialize");
+        let cursor = std::io::Cursor::new(&bytes);
+        let archive = zip::ZipArchive::new(cursor).expect("zip");
+        let names: Vec<String> = archive.file_names().map(String::from).collect();
+        assert!(names.iter().any(|n| n == "BinData/image1.png"), "BinData missing: {:?}", names);
+    }
+
+    #[test]
+    fn picture_manifest_entry() {
+        let png_bytes = vec![0x89u8, 0x50, 0x4e, 0x47];
+        let doc = make_picture_doc(1, "png", png_bytes, 5000, 3000);
+        let bytes = serialize_hwpx(&doc).expect("serialize");
+        let cursor = std::io::Cursor::new(&bytes);
+        let mut archive = zip::ZipArchive::new(cursor).expect("zip");
+        let mut hpf = archive.by_name("Contents/content.hpf").expect("content.hpf");
+        let mut xml = String::new();
+        std::io::Read::read_to_string(&mut hpf, &mut xml).expect("read");
+        assert!(xml.contains("BinData/image1.png"), "manifest missing: {xml}");
+        assert!(xml.contains("image/png"), "media-type missing");
+    }
+
+    #[test]
+    fn picture_roundtrip_attr() {
+        let png_bytes = vec![0x89u8, 0x50, 0x4e, 0x47];
+        let doc = make_picture_doc(2, "png", png_bytes, 7200, 5400);
+        let bytes = serialize_hwpx(&doc).expect("serialize");
+        let xml = extract_section0_xml(&bytes);
+        assert!(xml.contains("<hp:pic "), "hp:pic missing");
+        assert!(xml.contains(r#"binaryItemIDRef="image2""#), "binaryItemIDRef missing: {xml}");
+        assert!(xml.contains(r#"width="7200""#), "width missing");
+        assert!(xml.contains(r#"height="5400""#), "height missing");
+
+        let parsed = crate::parser::hwpx::parse_hwpx(&bytes).expect("parse back");
+        let p0 = &parsed.sections[0].paragraphs[0];
+        let pic_ctrl = p0.controls.iter().find_map(|c| {
+            if let crate::model::control::Control::Picture(p) = c { Some(p.as_ref()) } else { None }
+        }).expect("Picture control not found");
+        assert_eq!(pic_ctrl.image_attr.bin_data_id, 2, "bin_data_id roundtrip");
+        assert_eq!(pic_ctrl.common.width, 7200, "width roundtrip");
+        assert_eq!(pic_ctrl.common.height, 5400, "height roundtrip");
+    }
+
+    // ─── Stage 3/#186: 표 직렬화 ───
+
+    fn make_table_doc(row_count: u16, col_count: u16, border_fill_id: u16) -> Document {
+        use crate::model::table::{Table, Cell};
+        use crate::model::control::Control;
+        let mut doc = Document::default();
+        let mut sec = crate::model::document::Section::default();
+        let mut para = crate::model::paragraph::Paragraph::default();
+
+        let mut tbl = Table::default();
+        tbl.row_count = row_count;
+        tbl.col_count = col_count;
+        tbl.border_fill_id = border_fill_id;
+        for r in 0..row_count {
+            for c in 0..col_count {
+                tbl.cells.push(Cell::new_empty(c, r, 5000, 1000, border_fill_id));
+            }
+        }
+        para.text = "\u{0002}".to_string();
+        para.controls.push(Control::Table(Box::new(tbl)));
+        sec.paragraphs.push(para);
+        doc.sections.push(sec);
+        doc
+    }
+
+    fn find_table(para: &crate::model::paragraph::Paragraph) -> &crate::model::table::Table {
+        para.controls.iter().find_map(|c| {
+            if let crate::model::control::Control::Table(t) = c { Some(t.as_ref()) } else { None }
+        }).expect("Table control not found")
+    }
+
+    #[test]
+    fn empty_table_roundtrip() {
+        let doc = make_table_doc(2, 3, 1);
+        let bytes = serialize_hwpx(&doc).expect("serialize");
+        let parsed = crate::parser::hwpx::parse_hwpx(&bytes).expect("parse back");
+        assert_eq!(parsed.sections.len(), 1);
+        let p0 = &parsed.sections[0].paragraphs[0];
+        let tbl = find_table(p0);
+        assert_eq!(tbl.row_count, 2, "row_count");
+        assert_eq!(tbl.col_count, 3, "col_count");
+    }
+
+    #[test]
+    fn table_cell_text_roundtrip() {
+        use crate::model::table::{Table, Cell};
+        use crate::model::control::Control;
+        let mut doc = Document::default();
+        let mut sec = crate::model::document::Section::default();
+        let mut para = crate::model::paragraph::Paragraph::default();
+
+        let mut tbl = Table::default();
+        tbl.row_count = 1;
+        tbl.col_count = 1;
+        tbl.border_fill_id = 1;
+        let mut cell = Cell::new_empty(0, 0, 5000, 1000, 1);
+        cell.paragraphs.clear();
+        let mut cp = crate::model::paragraph::Paragraph::default();
+        cp.text = "셀 텍스트".to_string();
+        cell.paragraphs.push(cp);
+        tbl.cells.push(cell);
+
+        para.text = "\u{0002}".to_string();
+        para.controls.push(Control::Table(Box::new(tbl)));
+        sec.paragraphs.push(para);
+        doc.sections.push(sec);
+
+        let bytes = serialize_hwpx(&doc).expect("serialize");
+        let xml = extract_section0_xml(&bytes);
+        assert!(xml.contains("<hp:tbl "), "tbl missing: {}", &xml[..xml.len().min(500)]);
+        assert!(xml.contains("셀 텍스트"), "cell text missing");
+
+        let parsed = crate::parser::hwpx::parse_hwpx(&bytes).expect("parse back");
+        let p0 = &parsed.sections[0].paragraphs[0];
+        let tbl = find_table(p0);
+        assert_eq!(tbl.row_count, 1);
+        let cell_text = tbl.cells[0].paragraphs.iter().map(|p| p.text.as_str()).collect::<Vec<_>>().join("");
+        assert!(cell_text.contains("셀 텍스트"), "cell text roundtrip: {:?}", cell_text);
+    }
+
+    #[test]
+    fn table_borderfillidref() {
+        let doc = make_table_doc(1, 1, 7);
+        let bytes = serialize_hwpx(&doc).expect("serialize");
+        let xml = extract_section0_xml(&bytes);
+        assert!(xml.contains(r#"borderFillIDRef="7""#), "borderFillIDRef missing: {}", &xml[..xml.len().min(500)]);
+    }
+
+    #[test]
+    fn table_cellspan_roundtrip() {
+        use crate::model::table::{Table, Cell};
+        use crate::model::control::Control;
+        let mut doc = Document::default();
+        let mut sec = crate::model::document::Section::default();
+        let mut para = crate::model::paragraph::Paragraph::default();
+
+        let mut tbl = Table::default();
+        tbl.row_count = 2;
+        tbl.col_count = 2;
+        tbl.border_fill_id = 1;
+        let mut merged = Cell::new_empty(0, 0, 10000, 1000, 1);
+        merged.col_span = 2;
+        tbl.cells.push(merged);
+        tbl.cells.push(Cell::new_empty(0, 1, 5000, 1000, 1));
+        tbl.cells.push(Cell::new_empty(1, 1, 5000, 1000, 1));
+        para.text = "\u{0002}".to_string();
+        para.controls.push(Control::Table(Box::new(tbl)));
+        sec.paragraphs.push(para);
+        doc.sections.push(sec);
+
+        let bytes = serialize_hwpx(&doc).expect("serialize");
+        let parsed = crate::parser::hwpx::parse_hwpx(&bytes).expect("parse back");
+        let p0 = &parsed.sections[0].paragraphs[0];
+        let tbl = find_table(p0);
+        assert_eq!(tbl.cells[0].col_span, 2, "colSpan");
+        assert_eq!(tbl.cells[0].row_span, 1, "rowSpan");
+    }
+
+    // ─── Stage 1/#186: pagePr 동적화 ───
+
+    fn extract_section0_xml(bytes: &[u8]) -> String {
+        let cursor = std::io::Cursor::new(bytes);
+        let mut archive = zip::ZipArchive::new(cursor).expect("valid zip");
+        let mut entry = archive.by_name("Contents/section0.xml").expect("section0");
+        let mut xml = String::new();
+        std::io::Read::read_to_string(&mut entry, &mut xml).expect("read");
+        xml
+    }
+
+    fn make_section_doc(pd: crate::model::page::PageDef) -> Document {
+        let mut doc = Document::default();
+        let mut sec = crate::model::document::Section::default();
+        sec.section_def.page_def = pd;
+        let mut para = crate::model::paragraph::Paragraph::default();
+        para.text = "test".to_string();
+        sec.paragraphs.push(para);
+        doc.sections.push(sec);
+        doc
+    }
+
+    #[test]
+    fn pagePr_dynamic_width_height() {
+        use crate::model::page::PageDef;
+        let mut pd = PageDef::default();
+        pd.width = 42000;
+        pd.height = 59528;
+        pd.landscape = true;
+        let bytes = serialize_hwpx(&make_section_doc(pd)).expect("serialize");
+        let xml = extract_section0_xml(&bytes);
+        assert!(xml.contains(r#"width="42000""#), "width missing: {xml}");
+        assert!(xml.contains(r#"height="59528""#), "height missing");
+        assert!(xml.contains(r#"landscape="WIDELY""#), "landscape WIDELY missing");
+    }
+
+    #[test]
+    fn pagePr_margins_dynamic() {
+        use crate::model::page::PageDef;
+        let pd = PageDef {
+            width: 59528, height: 84186,
+            margin_left: 9000, margin_right: 9000,
+            margin_top: 6000, margin_bottom: 5000,
+            margin_header: 4000, margin_footer: 4000,
+            margin_gutter: 1000,
+            landscape: true,
+            ..Default::default()
+        };
+        let bytes = serialize_hwpx(&make_section_doc(pd)).expect("serialize");
+        let xml = extract_section0_xml(&bytes);
+        assert!(xml.contains(r#"left="9000" right="9000""#), "lr missing: {xml}");
+        assert!(xml.contains(r#"top="6000" bottom="5000""#), "tb missing");
+        assert!(xml.contains(r#"header="4000" footer="4000""#), "header missing");
+        assert!(xml.contains(r#"gutter="1000""#), "gutter missing");
+    }
+
+    // ─── Stage 2/#186: 다중 run 분할 ───
+
+    #[test]
+    fn single_charshape_single_run() {
+        use crate::model::paragraph::CharShapeRef;
+        let mut doc = Document::default();
+        let mut sec = crate::model::document::Section::default();
+        let mut para = crate::model::paragraph::Paragraph::default();
+        para.text = "hello".to_string();
+        para.char_shapes = vec![CharShapeRef { start_pos: 0, char_shape_id: 7 }];
+        sec.paragraphs.push(para);
+        doc.sections.push(sec);
+        let bytes = serialize_hwpx(&doc).expect("serialize");
+        let xml = extract_section0_xml(&bytes);
+        let run_count = xml.matches("<hp:run ").count();
+        // 두 번째 run만 (첫 run은 secPr 포함 run)
+        assert_eq!(run_count, 2, "expected 2 hp:run (secPr + text), got {run_count}: {xml}");
+        assert!(xml.contains(r#"charPrIDRef="7""#), "charPrIDRef=7 missing: {xml}");
+        assert!(xml.contains("<hp:t>hello</hp:t>"), "text missing: {xml}");
+    }
+
+    #[test]
+    fn multi_run_splits_correctly() {
+        use crate::model::paragraph::CharShapeRef;
+        let mut doc = Document::default();
+        let mut sec = crate::model::document::Section::default();
+        let mut para = crate::model::paragraph::Paragraph::default();
+        // "AB CD" — A,B belong to shape 1 (pos 0), space belongs to shape 2 (pos 2), C,D shape 3 (pos 3)
+        para.text = "AB CD".to_string();
+        para.char_shapes = vec![
+            CharShapeRef { start_pos: 0, char_shape_id: 1 },
+            CharShapeRef { start_pos: 2, char_shape_id: 2 },
+            CharShapeRef { start_pos: 3, char_shape_id: 3 },
+        ];
+        sec.paragraphs.push(para);
+        doc.sections.push(sec);
+        let bytes = serialize_hwpx(&doc).expect("serialize");
+        let xml = extract_section0_xml(&bytes);
+        // 3 text runs + 1 secPr run = 4 total
+        let run_count = xml.matches("<hp:run ").count();
+        assert_eq!(run_count, 4, "expected 4 hp:run, got {run_count}: {xml}");
+        assert!(xml.contains(r#"charPrIDRef="1"><hp:t>AB</hp:t>"#), "run1 missing: {xml}");
+        assert!(xml.contains(r#"charPrIDRef="2"><hp:t> </hp:t>"#), "run2 missing: {xml}");
+        assert!(xml.contains(r#"charPrIDRef="3"><hp:t>CD</hp:t>"#), "run3 missing: {xml}");
+    }
+
+    #[test]
+    fn pagePr_landscape_narrow() {
+        use crate::model::page::PageDef;
+        let pd = PageDef { landscape: false, width: 59528, height: 84186, ..Default::default() };
+        let bytes = serialize_hwpx(&make_section_doc(pd)).expect("serialize");
+        let xml = extract_section0_xml(&bytes);
+        assert!(xml.contains(r#"landscape="NARROW""#), "NARROW missing: {xml}");
     }
 }
