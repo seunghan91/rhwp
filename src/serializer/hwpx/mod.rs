@@ -335,6 +335,143 @@ mod tests {
     // ─── Stage 5/#186: 통합 검증 ───
 
     #[test]
+    #[ignore]
+    fn inspect_large_file_structure() {
+        let src = "samples/hwpx/2024년 1분기 해외직접투자 보도자료 ff.hwpx";
+        let bytes = std::fs::read(src).expect("file");
+        let doc = crate::parser::hwpx::parse_hwpx(&bytes).expect("parse");
+        eprintln!("sections: {}", doc.sections.len());
+        let rt = serialize_hwpx(&doc).expect("serialize");
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(rt.clone())).unwrap();
+        let names: Vec<_> = archive.file_names().map(|s| s.to_string()).collect();
+        eprintln!("rt zip files: {:?}", names);
+        let hpf = {
+            let mut f = archive.by_name("Contents/content.hpf").unwrap();
+            let mut s = String::new();
+            std::io::Read::read_to_string(&mut f, &mut s).unwrap();
+            s
+        };
+        for line in hpf.split("<opf:item") {
+            if line.contains("section") { eprintln!("item: {}", &line[..line.find('>').unwrap_or(line.len())+1]); }
+        }
+        // Compare header.xml sizes
+        let mut orig_archive = zip::ZipArchive::new(std::io::Cursor::new(
+            std::fs::read("samples/hwpx/2024년 1분기 해외직접투자 보도자료 ff.hwpx").unwrap()
+        )).unwrap();
+        let orig_hdr = { let mut f = orig_archive.by_name("Contents/header.xml").unwrap(); let mut s = String::new(); std::io::Read::read_to_string(&mut f, &mut s).unwrap(); s };
+        let rt_hdr = { let mut f = archive.by_name("Contents/header.xml").unwrap(); let mut s = String::new(); std::io::Read::read_to_string(&mut f, &mut s).unwrap(); s };
+        eprintln!("header.xml: orig={} rt={}", orig_hdr.len(), rt_hdr.len());
+        // font count
+        for tag in ["fontface", "charPr ", "paraPr ", "borderFill ", "style ", "numbering ", "tabDef ", "listLevel", "trackChange", "masterPage"] {
+            eprintln!("  {tag}: orig={} rt={}", orig_hdr.matches(tag).count(), rt_hdr.matches(tag).count());
+        }
+        // Compare section0 sizes
+        let orig_s0 = { let mut f = orig_archive.by_name("Contents/section0.xml").unwrap(); let mut s = String::new(); std::io::Read::read_to_string(&mut f, &mut s).unwrap(); s };
+        let rt_s0 = { let mut f = archive.by_name("Contents/section0.xml").unwrap(); let mut s = String::new(); std::io::Read::read_to_string(&mut f, &mut s).unwrap(); s };
+        eprintln!("section0.xml: orig={} rt={}", orig_s0.len(), rt_s0.len());
+        eprintln!("  orig hp:tbl: {} rt hp:tbl: {}", orig_s0.matches("<hp:tbl").count(), rt_s0.matches("<hp:tbl").count());
+        eprintln!("  orig hp:pic: {} rt hp:pic: {}", orig_s0.matches("<hp:pic").count(), rt_s0.matches("<hp:pic").count());
+        eprintln!("  orig hp:run: {} rt hp:run: {}", orig_s0.matches("<hp:run").count(), rt_s0.matches("<hp:run").count());
+        // Check section1
+        if let (Ok(mut of), Ok(mut rf)) = (orig_archive.by_name("Contents/section1.xml"), archive.by_name("Contents/section1.xml")) {
+            let (mut os, mut rs) = (String::new(), String::new());
+            std::io::Read::read_to_string(&mut of, &mut os).unwrap();
+            std::io::Read::read_to_string(&mut rf, &mut rs).unwrap();
+            eprintln!("section1.xml: orig={} rt={}", os.len(), rs.len());
+            eprintln!("  s1 orig hp:pic: {} rt hp:pic: {}", os.matches("<hp:pic").count(), rs.matches("<hp:pic").count());
+        }
+        // Count pictures in IR (including table cells)
+        use crate::model::control::Control;
+        fn count_pics_in_paras(paras: &[crate::model::paragraph::Paragraph]) -> u32 {
+            let mut n = 0u32;
+            for p in paras {
+                for c in &p.controls {
+                    match c {
+                        Control::Picture(_) => n += 1,
+                        Control::Table(tbl) => {
+                            for cell in &tbl.cells {
+                                n += count_pics_in_paras(&cell.paragraphs);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            n
+        }
+        for (si, sec) in doc.sections.iter().enumerate() {
+            eprintln!("  IR section{si}: {} pictures (incl. cells)", count_pics_in_paras(&sec.paragraphs));
+        }
+
+        // Re-parse rt file
+        let rt_doc2 = crate::parser::hwpx::parse_hwpx(&rt).expect("re-parse");
+        eprintln!("rt re-parse: {} sections, s0 {} paras", rt_doc2.sections.len(), rt_doc2.sections[0].paragraphs.len());
+
+        // Validate section XMLs
+        for sec_name in ["Contents/section0.xml", "Contents/section1.xml"] {
+            let xml = {
+                let mut f = archive.by_name(sec_name).unwrap();
+                let mut s = String::new();
+                std::io::Read::read_to_string(&mut f, &mut s).unwrap();
+                s
+            };
+            eprintln!("{sec_name} len={}", xml.len());
+            // Check for unmatched tags (crude: count opens/closes of hp:p)
+            let opens = xml.matches("<hp:p ").count();
+            let closes = xml.matches("</hp:p>").count();
+            eprintln!("  hp:p open={opens} close={closes}");
+            // Show first parse error via quick-xml
+            let mut reader = quick_xml::Reader::from_str(&xml);
+            reader.config_mut().check_end_names = true;
+            let mut buf = Vec::new();
+            let mut depth = 0u32;
+            let mut err = None;
+            loop {
+                match reader.read_event_into(&mut buf) {
+                    Ok(quick_xml::events::Event::Start(_)) => depth += 1,
+                    Ok(quick_xml::events::Event::End(_)) => { if depth > 0 { depth -= 1; } },
+                    Ok(quick_xml::events::Event::Eof) => break,
+                    Err(e) => { err = Some(format!("{e:?} at pos {}", reader.buffer_position())); break; },
+                    _ => {}
+                }
+                buf.clear();
+            }
+            if let Some(e) = err { eprintln!("  XML ERROR: {e}"); } else { eprintln!("  XML valid, depth={depth}"); }
+        }
+    }
+
+    #[test]
+    fn save_roundtrip_files_to_output() {
+        let out_dir = "output/roundtrip";
+        std::fs::create_dir_all(out_dir).unwrap();
+        let samples = [
+            "samples/hwpx/ref/ref_text.hwpx",
+            "samples/hwpx/ref/ref_table.hwpx",
+            "samples/hwpx/ref/ref_mixed.hwpx",
+            "samples/hwpx/2024년 1분기 해외직접투자 보도자료 ff.hwpx",
+            "samples/hwpx/form-002.hwpx",
+        ];
+        for src in &samples {
+            let Ok(bytes) = std::fs::read(src) else {
+                eprintln!("skip (not found): {src}");
+                continue;
+            };
+            let Ok(doc) = crate::parser::hwpx::parse_hwpx(&bytes) else {
+                eprintln!("skip (parse fail): {src}");
+                continue;
+            };
+            let Ok(rt) = serialize_hwpx(&doc) else {
+                eprintln!("skip (serialize fail): {src}");
+                continue;
+            };
+            let fname = std::path::Path::new(src).file_name().unwrap().to_str().unwrap();
+            let out = format!("{out_dir}/rt_{fname}");
+            std::fs::write(&out, &rt).unwrap();
+            eprintln!("saved: {out} ({} bytes)", rt.len());
+        }
+    }
+
+    #[test]
     fn ref_table_roundtrip() {
         let bytes = std::fs::read("samples/hwpx/ref/ref_table.hwpx").expect("ref_table.hwpx");
         let doc = crate::parser::hwpx::parse_hwpx(&bytes).expect("parse ref_table");
